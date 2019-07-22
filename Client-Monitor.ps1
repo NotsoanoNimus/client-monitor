@@ -60,7 +60,7 @@ $NotificationsAddress = 'postmaster@thestraightpath.email'
 # The address used as a 'source' on email notifications.
 $NotificationsSource = 'Client Monitor <client-monitor@thestraightpath.email>'
 # Email notification subject line.
-$NotificationsSubject = "Summary of User Environment Changes ($DomainUserFiler)"
+$NotificationsSubject = "Summary of User Environment Changes"
 # Which mail server to dispatch the notification to/through, and the target relay port.
 $NotificationsServer = 'relay.internaldomain.withoutauthentication.com'
 $NotificationsServerPort = 25
@@ -71,6 +71,7 @@ $NotificationOnNoChange = $True
 # A preformatted template for notifications when there is no change to any clients.
 $NotificationsBodyOnNoChange = @"
 <h1 class='NoChangeHeader'>No Client Changes</h1>`n
+<p class='SummaryText'><b><u>QUERY</u></b>: '$DomainUserFilter'</p>`n
 <p class='SummaryText'>There were no client changes detected on the network for client machines.</p>
 "@
 
@@ -79,6 +80,7 @@ $NotificationsAsHTML = $True
 # "Advanced" settings for the HTML notifications. These are just class names for certain objects used in the HTML notifs.
 $NotificationsHTMLNewValClass = 'NewText'
 $NotificationsHTMLPriorValClass = 'PriorText'
+$NotificationsHTMLDiffValClass = 'DifferentText'
 # HTML templating for the BODY field of notification emails.
 #  [[BODYTEXT]] is replaced dynamically with the generated notification.
 $NotificationsHTMLWrapper = @"
@@ -86,8 +88,11 @@ $NotificationsHTMLWrapper = @"
 <head>
 <style>
 	body { word-wrap: break-word; font-size: 12px; }
+	table { width: 100%; overflow-x: auto; }
 	table, th, td { border: 1px solid black; }
+	th, td { text-align: left; padding: 10px; }
 	th { background-color: #CCCCCC; }
+	tr:hover, td:hover { background-color: #EDEDED; }
 	hr { padding: 0; margin: 10px auto; border: none; }
 	p { font-size: 12px; color: black; }
 	h1, h2 { padding: 0; margin: 5px 0; }
@@ -97,8 +102,9 @@ $NotificationsHTMLWrapper = @"
 	.SummaryText { font-size: 16px; color: black; }
 	.$NotificationsHTMLPriorValClass { color: #AA2222; font-size: 14px; }
 	.$NotificationsHTMLNewValClass { color: #2222AA; font-size: 14px; }
+	.$NotificationsHTMLDiffValClass { font-weight: bold; font-style: italic; }
 	.SectionHeader { font-size: 20px; font-weight: bold; text-decoration: underline; }
-	div.DiffsSection { margin-left: 30px; }
+	div.DiffsSection { margin-left: 20px; }
 </style>
 </head>
 <body>
@@ -130,14 +136,12 @@ $NotificationsTriggers = @{
 # Output information about issues encountered in the script, based on the passed code.
 Function Output-Error() {
 	param( [Parameter(Mandatory=$true)][int]$errorCode )
-	
 	$errorInfo = switch($errorCode) {
 		1 { 'The path provided for the clientsList parameter does not exist.' }
 		2 { 'Could not populate a list of client IP addresses to poll.' }
 		3 { "Could not find the given ReportsDirectory: $ReportsDirectory" }
 		default { 'Unknown issue.' }
 	}
-	
 	Write-Host "ERROR" -ForegroundColor Red -NoNewLine; Write-Host ": $errorInfo"
 	exit $errorCode
 }
@@ -146,7 +150,6 @@ Function Output-Error() {
 # Resolve hostnames to the appropriate IP address and return it.
 Function Parse-Hostnames() {
 	param( [Parameter(Mandatory=$true)][string]$line )
-	
 	# Strip off double-dashes from hostnames that may be prefixed by one (ex. \\WKSTN107)
 	$line = $line -Replace '\\'
 	# Use the System DNS library to resolve the hostname properly, then fetch the IP property.
@@ -160,7 +163,6 @@ Function Parse-Hostnames() {
 		#   This prevents the script from iterating through v6 addresses only and just keeping the address variable the same.
 		if($address -eq $addressOrig) { $address = $null }
 	}
-	
 	return $address
 }
 
@@ -299,6 +301,8 @@ Function Add-To-Report() {
 	$NOTIFSXN = ""
 	$spanNewItem = "<span class='$NotificationsHTMLNewValClass'>"
 	$spanPriorItem = "<span class='$NotificationsHTMLPriorValClass'>"
+	$spanDifferentItem = "<span class='$NotificationsHTMLDiffValClass'>"
+	# New Objects section.
 	if($NewObject.Keys.Count -gt 0) {
 		$NOTIFSXN += "<span class='SectionHeader'>New $ItemName</span><br />`n"
 		foreach($new in $NewObject.Keys) {
@@ -309,6 +313,7 @@ Function Add-To-Report() {
 			$NOTIFSXN += "</div>`n"
 		}
 	}
+	# Removed Objects section.
 	if($RemovedObject.Keys.Count -gt 0) {
 		$NOTIFSXN += "<span class='SectionHeader'>Removed $ItemName</span><br />`n"
 		foreach($removed in $RemovedObject.Keys) {
@@ -319,6 +324,7 @@ Function Add-To-Report() {
 			$NOTIFSXN += "</div>`n"
 		}
 	}
+	# Changed Objects section.
 	if($ChangedObject.Keys.Count -gt 0) {
 		$NOTIFSXN += "<span class='SectionHeader'>Changed $ItemName</span><br />`n"
 		foreach($changed in $ChangedObject.Keys) {
@@ -329,9 +335,17 @@ Function Add-To-Report() {
 			$tableNews = @{}; $tablePriors = @{}
 			($ChangedObject.$changed | Get-Member -Type NoteProperty | Where-Object -Property Name -NotLike *_prior).Name `
 				| Sort-Object | ForEach-Object {
-				$tableNewsWrapper = "$spanNewItem" + $ChangedObject.$changed.$_ + "</span>"
+				# Each key will correspond to a fully-HTML value for the "output table" object.
+				$diffHighlight=$diffHighlightTerm = ""
+				# If the two specific values are different, define a stylization class 
+				if($ChangedObject.$changed.$_ -ne $ChangedObject.$changed."$($_)_prior") {
+					$diffHighlight = $spanDifferentItem; $diffHighlightTerm = "</span>"
+				}
+				$tableNewsWrapper = "$spanNewItem" + "$diffHighlight" + `
+					$ChangedObject.$changed.$_ + "$diffHighlightTerm" + "</span>"
 				$tableNews.Add($_,$tableNewsWrapper)
-				$tablePriorsWrapper = "$spanPriorItem" + $ChangedObject.$changed."$($_)_prior" + "</span>"
+				$tablePriorsWrapper = "$spanPriorItem" + "$diffHighlight" + `
+					$ChangedObject.$changed."$($_)_prior" + "$diffHighlightTerm" + "</span>"
 				$tablePriors.Add($_, $tablePriorsWrapper)
 			}
 			# Send the array to the HTML function to output both items under the same headers.
@@ -349,15 +363,19 @@ Function Add-To-Report() {
 
 # Interpret compounding flags using a logical AND. Used for report generation.
 Function Interpret-Flags() {
-	param(
-		[PSCustomObject]$FlagSet = @{}, [int]$GivenValue = 0
-	)
+	param( [PSCustomObject]$FlagSet = @{}, [int]$GivenValue = 0 )
+	# Can't do a bitwise AND against a 0, so just automatically default to the flagset's 0 code.
+	if($GivenValue -eq 0) { return $FlagSet["code0"] }
+	# Initialize the return variable.
 	$flagsInfo = ""
 	# For each "codeXX" key, strip off the "code" prefix and do a logical AND against the integer to see if that bit is set.
 	#    If the bit is set, append the corresponding "codeXX" value from the object onto the return string.
 	$FlagSet.Keys | ForEach-Object {
+		# Strip the "code" piece from the key.
 		$code = $_ -Replace "code"
+		# Do a bitwise AND on the givenvalue and the code from the key ID.
 		$isMatch = $GivenValue -BAND $code
+		# If it matches (ergo the flag is set), append the piece/verb from the flagset onto the return variable.
 		if($isMatch -ne 0) { $flagsInfo += $FlagSet["code$($code)"] + " " }
 	}
 	return $flagsInfo
@@ -553,7 +571,6 @@ foreach($client in $clientAddresses) {
 	}
 	# Index the PSChildName fields from each fetched application as a key index.
 	$installedAppsIndex = Invoke-Command @invokeParams -ScriptBlock {
-		#$installedAppsArray = [System.Collections.ArrayList]@()
 		$installedAppsArray = [System.Collections.ArrayList]@()
 		(Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*) `
 			| ForEach-Object { $installedAppsArray += "$($_.PSChildName)_HKLM" }
@@ -576,22 +593,41 @@ foreach($client in $clientAddresses) {
 	# Harvest Windows Store-based applications.
 	$reportStoreApps = Invoke-Command @invokeParams -ScriptBlock {
 		$storeAppsObject = @{}
-		$appsList = Get-AppxPackage
+		# Since the AllUsers switch will return multiples, make sure everything is unique by name and architecture.
+		$appsList = Get-AppxPackage -AllUsers
 		foreach($app in $appsList) {
-			$storeAppsObject.Add("$($app.Name)_$($app.Architecture)", `
-				($appsList | Where-Object -Property Name -eq "$($app.Name)" `
-					| Where-Object -Property Architecture -eq "$($app.Architecture)" `
-					| Select-Object InstallLocation, Status, PublisherId | ConvertTo-Json | ConvertFrom-Json))
+			$keyname = "$($app.InstallLocation)"
+			$i = 0  #Keep track of the "layer"
+			for(; $i -lt 4; $i++) {
+				# Allow up to 4 nested key names, each successive duplicate being suffixed by an extra underscore.
+				if($storeAppsObject.ContainsKey($keyname)) { $keyname += "_" }
+			}
+			# NOTE: This section has added 15-20 seconds in per-client processing.
+			$storeAppsInfo = ($appsList | Where-Object -Property InstallLocation -eq "$($app.InstallLocation)" `
+				| Select-Object Name, Architecture, InstallLocation, Status, PublisherId | ConvertTo-Json | ConvertFrom-Json)
+			$perUserAppStatus = ($appsList | Where-Object -Property InstallLocation -eq "$($app.InstallLocation)" `
+				| Select-Object PackageUserInformation) | ForEach-Object {
+					[System.String]::Join("; ", @("App Status:", @(("$($_.PackageUserInformation)" `
+						| Select-String -Pattern '\[[\\\w]+\]\s*\:\s+\w+' -AllMatches).Matches.Value) | Out-String))
+				}
+			# Add the PackageUserInformation property (with extracted names/statuses) into the final object.
+			$storeAppsInfo | Add-Member -Name PackageUserInformation -Type NoteProperty -Value "$($perUserAppStatus)"
+			$storeAppsObject.Add($keyname, $storeAppsInfo)
 		}
 		return $storeAppsObject
 	}
-	# Get an index of store apps based on the format NAME_ARCHITECTURE (e.g. Microsoft.Net.4.0_x86)
+	# Get an index of store apps based on the InstallLocation.
 	$storeAppsIndex = Invoke-Command @invokeParams -ScriptBlock {
 		$storeAppsArray = [System.Collections.ArrayList]@()
-		Get-AppxPackage | ForEach-Object { $storeAppsIndex += "$($_.Name)_$($_.Architecture)" }
+		$listofApps = Get-AppxPackage -AllUsers
+		$listofApps | ForEach-Object {
+			$keyname = "$($_.InstallLocation)"
+			for($i = 0; $i -lt 4; $i++) { if($storeAppsArray.Contains($keyname)) { $keyname += "_" } }
+			$storeAppsArray += $keyname
+		}
 		return $storeAppsArray
 	}
-	$storeAppsIndexFIX = @(); $storeAppsIndexFIX += $sotreAppsIndex | ForEach-Object { [string]$_ }
+	$storeAppsIndexFIX = @(); $storeAppsIndexFIX += $storeAppsIndex | ForEach-Object { [string]$_ }
 	# Add it to the report.
 	$FullReport.Add("StoreAppsIndex", $storeAppsIndexFIX)
 	$FullReport.Add("StoreApps", $reportStoreApps)
@@ -676,6 +712,7 @@ foreach($client in $clientAddresses) {
 	Write-Report($FullReport)
 	
 	
+	
 	#####################################################################
 	# COMPARISON SECTION.
 	# All comparisons will use the most recent report as the reference object, comparing AGAINST the prior report.
@@ -712,7 +749,7 @@ foreach($client in $clientAddresses) {
 	# -----------------------------------------
 	# Compare StoreApps.
 	Compare-Deltas `
-		-CompareProperties @("InstallLocation", "Status", "PublisherId") `
+		-CompareProperties @("Name", "Architecture", "InstallLocation", "Status", "PublisherId", "PackageUserInformation") `
 		-DeltasObjChanged $deltasObject.ChangedStoreApps `
 		-DeltasObjNew $deltasObject.NewStoreApps `
 		-DeltasObjRemoved $deltasObject.RemovedStoreApps `
@@ -773,6 +810,7 @@ foreach($client in $clientAddresses) {
 #    If not, don't bother generating a notification unless specified in the configuration.
 if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 	$NOTIFBODY = "<h1>Summary of Environment Changes</h1>`n`n"
+	$NOTIFBODY += "<p class='SummaryText'><b><u>QUERY</u></b>: '$DomainUserFilter'</p>`n"
 	$NOTIFBODY += "<p class='SummaryText'>There were changes detected on the network for the following clients. "
 	$NOTIFBODY += "Anything in <span class='$NotificationsHTMLPriorValClass'>red</span> is a removed property, "
 	$NOTIFBODY += "and anything in <span class='$NotificationsHTMLNewValClass'>blue</span> has been added.</p>`n`n"
@@ -826,7 +864,7 @@ if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 				-ChangedObject $clientDeltas.ChangedInstalledApps -ItemName "Installed Applications"
 		}
 	
-	# -----------------------------------------
+		# -----------------------------------------
 		# SERVICES
 		$STATUS_CODES = @{
 			code1="STOPPED"; code2="START-PENDING"; code3="STOP-PENDING"
@@ -862,6 +900,24 @@ if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 				$clientDeltas.ChangedServices.$_.ServiceType_prior = `
 					(Interpret-Flags -FlagSet $SERVICE_TYPES -GivenValue $svccode).TrimEnd()
 			}
+			$clientDeltas.RemovedServices.Keys | ForEach-Object {
+				$statuscode = $clientDeltas.RemovedServices.$_.Status
+				$startcode = $clientDeltas.RemovedServices.$_.StartType
+				$svccode = $clientDeltas.RemovedServices.$_.ServiceType
+				$clientDeltas.RemovedServices.$_.Status = $STATUS_CODES["code$($statuscode)"]
+				$clientDeltas.RemovedServices.$_.StartType = $START_TYPES["code$($startcode)"]
+				$clientDeltas.RemovedServices.$_.ServiceType = `
+					(Interpret-Flags -FlagSet $SERVICE_TYPES -GivenValue $svccode).TrimEnd()
+			}
+			$clientDeltas.NewServices.Keys | ForEach-Object {
+				$statuscode = $clientDeltas.NewServices.$_.Status
+				$startcode = $clientDeltas.NewServices.$_.StartType
+				$svccode = $clientDeltas.NewServices.$_.ServiceType
+				$clientDeltas.NewServices.$_.Status = $STATUS_CODES["code$($statuscode)"]
+				$clientDeltas.NewServices.$_.StartType = $START_TYPES["code$($startcode)"]
+				$clientDeltas.NewServices.$_.ServiceType = `
+					(Interpret-Flags -FlagSet $SERVICE_TYPES -GivenValue $svccode).TrimEnd()
+			}
 			$NOTIFBODY += Add-To-Report `
 				-NewObject $clientDeltas.NewServices -RemovedObject $clientDeltas.RemovedServices `
 				-ChangedObject $clientDeltas.ChangedServices -ItemName "Services"
@@ -876,13 +932,33 @@ if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 			code512="NOT-AVAILABLE"; code1024="SERVICING"; code2048="NEED-REMEDIATION"
 			code=""
 		}
+		$ARCHITECTURE_CODES = @{
+			code0="x86"; code5="ARM"; code9="x64"; code11="Neutral"; code65535="UNKNOWN"; code=""
+		}
 		if($NotificationsTriggers.StoreAppsChange -eq $True) {
+			# Change numeric codes to their equivalent values.
 			$clientDeltas.ChangedStoreApps.Keys | ForEach-Object {
 				$clientDeltas.ChangedStoreApps.$_.Status = `
 					(Interpret-Flags -FlagSet $SA_STATUS_CODES -GivenValue $statuscode).TrimEnd()
+				$archcode = $clientDeltas.ChangedStoreApps.$_.Architecture
+				$clientDeltas.ChangedStoreApps.$_.Architecture = $ARCHITECTURE_CODES["code$($archcode)"]
 				$statuscode = $clientDeltas.ChangedStoreApps.$_.Status_prior
 				$clientDeltas.ChangedStoreApps.$_.Status_prior = `
 					(Interpret-Flags -FlagSet $SA_STATUS_CODES -GivenValue $statuscode).TrimEnd()
+				$archcode = $clientDeltas.ChangedStoreApps.$_.Architecture_prior
+				$clientDeltas.ChangedStoreApps.$_.Architecture_prior = $ARCHITECTURE_CODES["code$($archcode)"]
+			}
+			$clientDeltas.RemovedStoreApps.Keys | ForEach-Object {
+				$clientDeltas.RemovedStoreApps.$_.Status = `
+					(Interpret-Flags -FlagSet $SA_STATUS_CODES -GivenValue $statuscode).TrimEnd()
+				$archcode = $clientDeltas.RemovedStoreApps.$_.Architecture
+				$clientDeltas.RemovedStoreApps.$_.Architecture = $ARCHITECTURE_CODES["code$($archcode)"]
+			}
+			$clientDeltas.NewStoreApps.Keys | ForEach-Object {
+				$clientDeltas.NewStoreApps.$_.Status = `
+					(Interpret-Flags -FlagSet $SA_STATUS_CODES -GivenValue $statuscode).TrimEnd()
+				$archcode = $clientDeltas.NewStoreApps.$_.Architecture
+				$clientDeltas.NewStoreApps.$_.Architecture = $ARCHITECTURE_CODES["code$($archcode)"]
 			}
 			$NOTIFBODY += Add-To-Report `
 				-NewObject $clientDeltas.NewStoreApps -RemovedObject $clientDeltas.RemovedStoreApps `
