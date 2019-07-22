@@ -637,6 +637,7 @@ foreach($client in $clientAddresses) {
 	# Harvest startup applications.
 	$reportStartupApps = Invoke-Command @invokeParams -ScriptBlock {
 		$startupAppsObject = @{}
+		# Get Startup apps using the below command. This will catch everything except 6432 Nodes in the registry.
 		$w32StartupCmd = Get-CimInstance Win32_StartupCommand
 		foreach($startupapp in $w32StartupCmd) {
 			$startupAppsObject.Add("$($startupapp.Name)_$($startupapp.User)", `
@@ -644,12 +645,24 @@ foreach($client in $clientAddresses) {
 					| Where-Object -Property User -eq "$($startupapp.User)" `
 					| Select-Object Command, Location, User | ConvertTo-Json | ConvertFrom-Json))
 		}
+		# Get Startup apps from the location mentioned above.
+		$6432NodeItems = (Get-ItemProperty HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run) `
+			| Get-Member -Type NoteProperty | Where-Object -Property Name -NotLike PS*
+		# Add each one onto the startup apps that are registered for the client.
+		foreach($item in $6432NodeItems) {
+			$startupAppsObject.Add("$($item.Name)_6432-NODE", `
+				@{Command="$($item.Definition -Replace 'string ')"; Location="64-to-32_Registry_Node"; User="6432-NODE"})
+		}
 		return $startupAppsObject
 	}
 	# Index StartupApps by the "Name" key.
 	$startupAppsIndex = Invoke-Command @invokeParams -ScriptBlock {
 		$startupAppsArray = [System.Collections.ArrayList]@()
 		Get-CimInstance Win32_StartupCommand | ForEach-Object { $startupAppsArray += "$($_.Name)_$($_.User)" }
+		Get-ItemProperty HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run `
+			| Get-Member -Type NoteProperty | Where-Object -Property Name -NotLike PS* | ForEach-Object {
+				$startupAppsArray += "$($_.Name)_6432-NODE"
+			}
 		return $startupAppsArray
 	}
 	$startupAppsIndexFIX = @(); $startupAppsIndexFIX += $startupAppsIndex | ForEach-Object { [string]$_ }
