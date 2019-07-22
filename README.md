@@ -75,4 +75,9 @@ $NotificationsTriggers = @{
 Notifications are designed to be generated to a target SMTP relay server (using the Tweaks section), and can have either plaintext or HTML formatting.
 Here is a sample notification from a simple _LOCALHOST_ differentiation in a few monitored locations.
 
+A couple things to note with notifications like this:
+- The actual values under the changed _Client License Service_ that were changed are highlighted as bold and italic simultaneously.
+- Some fields may show up completely empty. This almost always indicates a **null value** was in that field.
+- This format can be entirely controlled/restyled within the _Tweaks_ section, as mentioned above.
+
 ![Sample Notification from the Monitoring Script](https://raw.githubusercontent.com/NotsoanoNimus/client-monitor/master/docs/Notification_Sample.png)

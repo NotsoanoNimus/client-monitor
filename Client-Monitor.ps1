@@ -80,6 +80,7 @@ $NotificationsBodyOnNoChange = @"
 # By default, all notifications are sent as HTML.
 $NotificationsAsHTML = $True
 # "Advanced" settings for the HTML notifications. These are just class names for certain objects used in the HTML notifs.
+#    They're important to define, less important to change.
 $NotificationsHTMLNewValClass = 'NewText'
 $NotificationsHTMLPriorValClass = 'PriorText'
 $NotificationsHTMLDiffValClass = 'DifferentText'
@@ -135,7 +136,7 @@ $NotificationsTriggers = @{
 ###################################################
 
 
-# Output information about issues encountered in the script, based on the passed code.
+# Output information about issues encountered in the script, based on the passed code, and exit with the given code.
 Function Output-Error() {
 	param( [Parameter(Mandatory=$true)][int]$errorCode )
 	$errorInfo = switch($errorCode) {
@@ -210,6 +211,7 @@ Function Send-Email() {
 Function Write-Report() {
 	param( [System.Object]$outputJSON = @{} )
 	
+	# Today's date, format of YYYY-MM-DD-HH_MM
 	$dateTag = Get-Date -UFormat %Y-%m-%d-%H_%M
 	$targetFile = $ReportsDirectory + "\Report-$($outputJSON.Hostname)-$dateTag.txt"
 	
@@ -223,6 +225,7 @@ Function Clean-Reports() {
 	param( [string]$clientHostname )
 	Write-Host "-- Cleaning reports according to the script retention policy ($MaxReportRetentionHours Hours)."
 	$TodaysDate = ((Get-Date -UFormat %Y-%m-%d-%H_%M).toString())
+	# For each report filename containing the hostname, get the date on the filename and compare to the retention policy.
 	foreach($report in (Get-ChildItem -Path "$ReportsDirectory\Report-$clientHostname*").Name) {
 	$report -Match '-(\d{4}-\d{2}-\d{2}-\d{2}_\d{2}).txt$' | Out-Null
 		if((Get-Date-Delta-Hours "$TodaysDate" "$($matches[1])") -ge $MaxReportRetentionHours) {
@@ -270,33 +273,40 @@ Function Compare-Deltas() {
 		$priorObject = $Priors.$item
 		# If the object isn't found in the last report, assume it's a new application.
 		if($priorObject -eq $null -Or $priorObject -eq @{}) { continue }
-		# Compare DisplayName, DisplayVersion, Publisher, and InstallDate between the two report objects.
-		$diffs = $CompareProperties | % { $todayObject.$_ -ne $priorObject.$_ }
+		# Compare properties between the two report objects and return it as an array of True/False.
+		$diffs = $CompareProperties | ForEach-Object { $todayObject.$_ -ne $priorObject.$_ }
+		# If a "True" was found, there was a difference detected, so set the flag. This can honestly be shortened.
 		if($diffs.Contains($True)) { $isDifferent = $True }
 		# Check if there was a difference caught
 		if($isDifferent -eq $True) {
+			# For each property name to compare, add on the _prior variable with the value of the "Prior" object.
 			$CompareProperties | ForEach-Object {
 				$todayObject | Add-Member -Name "$($_)_prior" -Value $priorObject.$_ -Type NoteProperty
 			}
+			# Add it to the object pointer for the deltasObject variable.
 			$DeltasObjChanged.Add("$item", $todayObject)
 		}
 	}
-	# Compare the indices of PSChildName fields to see if an application was added/removed.
+	# Compare the indices of fields to see if an application was added/removed.
 	$indexDiffs = Compare-Object $TodaysIndex $PriorsIndex
 	foreach($difference in $indexDiffs) {
-		$app = $difference.InputObject
+		$diff = $difference.InputObject
 		if($difference.SideIndicator -eq "<=") {
 			# The item was added.
-			$DeltasObjNew.Add("$app", $Todays.$app)
+			$DeltasObjNew.Add("$diff", $Todays.$diff)
 		} elseif($difference.SideIndicator -eq "=>") {
 			# The item was removed.
-			$DeltasObjRemoved.Add("$app", $Priors.$app)
+			$DeltasObjRemoved.Add("$diff", $Priors.$diff)
 		}
 	}
 }
 
 
-# Template function to modularize the repetitive task of adding pieces to the email notification.
+<# Template function to modularize the repetitive task of adding pieces to the email notification.
+ #  For New and Removed objects, it simply iterates the Hashtable keys (after checking if there even are any)
+ #    and adds the HTML for each corresponding object under the detected keys.
+ #  For Changed objects, the two different objects are spliced together to create a single table to show differences.
+ #>
 Function Add-To-Report() {
 	param(
 		[Parameter(Mandatory=$True)][PSCustomObject]$NewObject = @{},
@@ -304,6 +314,7 @@ Function Add-To-Report() {
 		[Parameter(Mandatory=$True)][PSCustomObject]$ChangedObject = @{},
 		[Parameter(Mandatory=$True)][string]$ItemName
 	)
+	# Declare initial local variables.
 	$NOTIFSXN = ""
 	$spanNewItem = "<span class='$NotificationsHTMLNewValClass'>"
 	$spanPriorItem = "<span class='$NotificationsHTMLPriorValClass'>"
@@ -343,10 +354,11 @@ Function Add-To-Report() {
 				| Sort-Object | ForEach-Object {
 				# Each key will correspond to a fully-HTML value for the "output table" object.
 				$diffHighlight=$diffHighlightTerm = ""
-				# If the two specific values are different, define a stylization class 
+				# If the two specific values are different, define a stylization class and wrap the text with it.
 				if($ChangedObject.$changed.$_ -ne $ChangedObject.$changed."$($_)_prior") {
 					$diffHighlight = $spanDifferentItem; $diffHighlightTerm = "</span>"
 				}
+				# In short, if the "diff" spans are filled out, the object will be highlighted to show it contains one of the deltas.
 				$tableNewsWrapper = "$spanNewItem" + "$diffHighlight" + `
 					$ChangedObject.$changed.$_ + "$diffHighlightTerm" + "</span>"
 				$tableNews.Add($_,$tableNewsWrapper)
@@ -354,10 +366,11 @@ Function Add-To-Report() {
 					$ChangedObject.$changed."$($_)_prior" + "$diffHighlightTerm" + "</span>"
 				$tablePriors.Add($_, $tablePriorsWrapper)
 			}
-			# Send the array to the HTML function to output both items under the same headers.
+			# Send the spliced array to the HTML function to output both items under the same headers.
 			$tableOut = (@($tablePriors,$tableNews) | ConvertTo-Json | ConvertFrom-Json) | ConvertTo-Html -Fragment
 			# Ensure that pieces aren't added to the table as HTML special chars ("&lt;"). Allows for formatting w/ SPAN.
 			$finalTable = [System.Web.HttpUtility]::HtmlDecode($tableOut)
+			# Add it to the string and close the div tag as appropriate.
 			$NOTIFSXN += "$finalTable<br />`n"
 			$NOTIFSXN += "</div>`n"
 		}
