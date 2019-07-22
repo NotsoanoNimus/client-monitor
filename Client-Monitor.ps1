@@ -16,8 +16,10 @@ Optional. If included as a switch to the script, a DELTAS text file will be gene
 This will only happen if deltas were actually detected.
 .PARAMETER NoNotifications
 Optional. If included as a switch to the script, the script will NOT send email notifications at all.
+.PARAMETER BCC
+Optional. If included, will BCC the target address(es) in the generated notifications.
 .EXAMPLE
-$0 -ClientsList "C:\some_directory\target_clients.txt" -NoNotifications
+$0 -ClientsList ".\target_clients.txt" -BCC "Test Name <tname@test.com>, Second Recip <srecip@testing.com>"
 
 #>
 
@@ -140,6 +142,7 @@ Function Output-Error() {
 		1 { 'The path provided for the clientsList parameter does not exist.' }
 		2 { 'Could not populate a list of client IP addresses to poll.' }
 		3 { "Could not find the given ReportsDirectory: $ReportsDirectory" }
+		4 { 'Could not get a list of workstations using Get-ADComputer. Please supply a ClientsList to the script if needed.' }
 		default { 'Unknown issue.' }
 	}
 	Write-Host "ERROR" -ForegroundColor Red -NoNewLine; Write-Host ": $errorInfo"
@@ -190,6 +193,9 @@ Function Send-Email() {
 		$BODY = $BODY -Replace '(</td>|</th>)', ' | '
 		$BODY = $BODY -Replace '<.*?>'
 	}
+	
+	# If there's a BCC argument to the script, split the string into an array of recipients along the comma characters.
+	if($BCC -ne "") { $BCC = $BCC.Split(",").Trim() }
 	
 	# Dispatch the email to the target server.
 	Send-MailMessage -From $FROM -To $TO -Subject $SUBJECT -Body $BODY -SmtpServer $RELAYSERVER `
@@ -396,7 +402,9 @@ $clientAddresses = [System.Collections.ArrayList]@()
 
 # Check to see whether a clientsList file was provided to the script.
 if($clientsList -eq "use-AD-list") {
-	foreach($line in Get-ADComputer -Filter $DomainUserFilter | Select-Object -Property Name) {
+	$clientNames = Get-ADComputer -Filter $DomainUserFilter | Select-Object -Property Name
+	if($? -eq $False) { Output-Error(4)  }
+	foreach($line in $clientNames) {
 		# May want to verify it's not an IP here but the Get-ADComputer
 		#    command doesn't seem to return raw IPs in the "Name" property.
 		$hostname = $line.Name
@@ -998,14 +1006,14 @@ if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 	$EmailSuccess = Send-Email -RELAYSERVER $NotificationsServer -RELAYPORT $NotificationsServerPort `
 		-FROM $NotificationsSource -TO $NotificationsAddress -SUBJECT $NotificationsSubject -BODY $NOTIFBODY
 	if($EmailSuccess -ne $True) {
-		Write-Host "~~~~ Dispatching email notification to $NotificationsAddress has failed!"
+		Write-Host "~~~~ Dispatching email notification to '$NotificationsAddress' (BCC: '$BCC') has failed!"
 	}
 } elseif($NotificationOnNoChange -eq $True -And $NoNotifications -eq $False) {
 	# Send an email (if enabled) to notify that no changes were detected.
 	$EmailSuccess = Send-Email -RELAYSERVER $NotificationsServer -RELAYPORT $NotificationsServerPort `
 		-FROM $NotificationsSource -TO $NotificationsAddress -SUBJECT $NotificationsSubject -BODY $NotificationsBodyOnNoChange
 	if($EmailSuccess -ne $True) {
-		Write-Host "~~~~ Dispatching email notification to $NotificationsAddress has failed!"
+		Write-Host "~~~~ Dispatching email notification to '$NotificationsAddress' (BCC: '$BCC') has failed!"
 	}
 }
 
