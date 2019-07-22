@@ -74,3 +74,5 @@ $NotificationsTriggers = @{
 ## Notifications
 Notifications are designed to be generated to a target SMTP relay server (using the Tweaks section), and can have either plaintext or HTML formatting.
 Here is a sample notification from a simple _LOCALHOST_ differentiation in a few monitored locations.
+
+![Sample Notification from the Monitoring Script](https://raw.githubusercontent.com/NotsoanoNimus/client-monitor/master/docs/Notification_Sample.png)
