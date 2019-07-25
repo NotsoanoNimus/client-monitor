@@ -117,6 +117,13 @@ $NotificationsHTMLWrapper = @"
 </html>
 "@
 
+
+# Tracked values across each given category. These values are used in the "Select-Object" method on the queries
+#    for each item in the set returned per category, and also in the later comparisons.
+$TrackedValues = @{
+	InstalledApps = @("DisplayName", "DisplayVersion", "Publisher", "InstallDate", "InstallLocation")
+}
+
 <# The events or triggers used for notifications to be dispatched to the notifications address.
  #    This section effectively turns them on/off. Names are descriptive enough for the purpose.
  #    These are all enabled by default.
@@ -154,6 +161,7 @@ $NotificationsFilters = @{
 		New = @()
 		Removed = @()
 		Changed = @("group policy*", "*windows update*")
+		Changed = @("*client license*", "*group policy*", "windows update*")
 	}
 	StoreApps = @{
 		New = @()
@@ -177,6 +185,7 @@ $NotificationsFilters = @{
 ###################################################
 #                    FUNCTIONS                    #
 ###################################################
+
 
 
 # Output information about issues encountered in the script, based on the passed code, and exit with the given code.
@@ -498,7 +507,9 @@ Function Add-To-Report() {
 
 # Interpret compounding flags using a logical AND. Used for report generation.
 Function Interpret-Flags() {
-	param( [PSCustomObject]$FlagSet = @{}, [int]$GivenValue = 0 )
+	param( [PSCustomObject]$FlagSet = @{}, $GivenValue )
+	# If the passed argument for "GivenValue" isn't numeric, then leave with "GivenValue" as the return.
+	if($GivenValue.GetType().Name -ne "Int32") { return $GivenValue }
 	# Can't do a bitwise AND against a 0, so just automatically default to the flagset's 0 code.
 	if($GivenValue -eq 0) { return $FlagSet["code0"] }
 	# Initialize the return variable.
@@ -678,101 +689,74 @@ foreach($client in $clientAddresses) {
 	
 	# -----------------------------------------
 	# Collect installed applications at multiple layers.
-	$reportInstalledApps = Invoke-Command @invokeParams -ScriptBlock {
-		$installedAppsObject = @{}
-		# Installed applications on the local machine.
-		$HKLM = Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*
-		$HKCU = Get-ItemProperty HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*
-		$WOW6432 = Get-ItemProperty HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*
-		foreach($app in $HKLM) {
-			$installedAppsObject.Add("$($app.PSChildName)_HKLM", `
-				($HKLM | Where-Object -Property PSChildName -eq "$($app.PSChildName)" `
-					| Select-Object DisplayName, DisplayVersion, Publisher, InstallDate, InstallLocation `
-					| ConvertTo-Json | ConvertFrom-Json))
-		}
-		# Same as above but only apps installed for the "current user".
-		foreach($app in $HKCU) {
-			$installedAppsObject.Add("$($app.PSChildName)_HKCU", `
-				($HKCU | Where-Object -Property PSChildName -eq "$($app.PSChildName)" `
-					| Select-Object DisplayName, DisplayVersion, Publisher, InstallDate, InstallLocation `
-					| ConvertTo-Json | ConvertFrom-Json))
-		}
-		# 32-to-64-bit installed applications.
-		foreach($app in $WOW6432) {
-			$installedAppsObject.Add("$($app.PSChildName)_6432Node", `
-				($WOW6432	| Where-Object -Property PSChildName -eq "$($app.PSChildName)" `
-					| Select-Object DisplayName, DisplayVersion, Publisher, InstallDate, InstallLocation `
-					| ConvertTo-Json | ConvertFrom-Json))
-		}
-		return $installedAppsObject
+	$installedAppsObject = Invoke-Command @invokeParams -ScriptBlock {
+		$installedApps = @()
+		# Local Machine applications.
+		$installedApps += Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*
+		# Current User applications.
+		$installedApps += Get-ItemProperty HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*
+		# 64-to-32-bit applications.
+		$installedApps += Get-ItemProperty HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*
+		# Send back the aggregated object.
+		return $installedApps
 	}
-	# Index the PSChildName fields from each fetched application as a key index.
-	$installedAppsIndex = Invoke-Command @invokeParams -ScriptBlock {
-		$installedAppsArray = [System.Collections.ArrayList]@()
-		(Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*) `
-			| ForEach-Object { $installedAppsArray += "$($_.PSChildName)_HKLM" }
-		(Get-ItemProperty HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*) `
-			| ForEach-Object { $installedAppsArray += "$($_.PSChildName)_HKCU" }
-		(Get-ItemProperty HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*) `
-			| ForEach-Object { $installedAppsArray += "$($_.PSChildName)_6432Node" }
-		return $installedAppsArray
+	# Define the two objects to insert into the main report hashtable.
+	$reportInstalledApps = @{}; $installedAppsIndex = @()
+	foreach($app in $installedAppsObject) {
+		# Append a suffix onto each index to ensure uniqueness, based on which part of the registry the key lives in.
+		$keysuffix = "_"
+		if($app.PSPath -Match 'Wow6432Node') { $keysuffix += '6432Node' }
+		elseif($app.PSPath -Match '::HKEY_CURRENT') { $keysuffix += 'HKCU' }
+		elseif($app.PSPath -Match '::HKEY_LOCAL') { $keysuffix += 'HKLM' }
+		else { $keysuffix += '?' }
+		$keyname = "$($app.PSChildName)" + $keysuffix
+		# Add the keyname onto the index.
+		$installedAppsIndex += $keyname
+		# Create the key in the hashtable.
+		$reportInstalledApps.Add($keyname, ($installedAppsObject | Where-Object -Property PSPath -eq "$($app.PSPath)" `
+			| Select-Object $TrackedValues.InstalledApps | ConvertTo-Json | ConvertFrom-Json))
 	}
-	# FIX (used in all indexing): PowerShell liked to return object references in the array instead of STRINGS.
-	#    So the generated JSON was spitting out objects unexpectedly for any REMOTE workstation. This cheap, hacky
-	#    typecast below should fix it and isn't too costly.
-	$installedAppsIndexFIX = @(); $installedAppsIndexFIX += $installedAppsIndex | ForEach-Object { [string]$_ }
-	# Add them to the report.
-	$FullReport.Add("InstalledAppsIndex", $installedAppsIndexFIX)
+	# Add the items to the new report.
+	$FullReport.Add("InstalledAppsIndex", $installedAppsIndex)
 	$FullReport.Add("InstalledApps", $reportInstalledApps)
 	
 		
 	# -----------------------------------------
 	# Harvest Windows Store-based applications.
-	$reportStoreApps = Invoke-Command @invokeParams -ScriptBlock {
-		$storeAppsObject = @{}
-		# Since the AllUsers switch will return multiples, make sure everything is unique by name and architecture.
-		$priorELVL = $ErrorActionPreference; $ErrorActionPreference = 'SilentlyContinue'   # shhhh...
-		$appsList = Get-AppxPackage -AllUsers
-		if($? -ne $True) {
-			Write-Host "~~~~~ Store apps couldn't be captured for this client. Please verify administrative permissions."
+	$priorELVL = $ErrorActionPreference; $ErrorActionPreference = 'SilentlyContinue'   # shhhh...
+	# Get the store apps a single time and run all computations on the LOCAL side! (fix to Issue #1 on GitHub).
+	$storeAppsList = Invoke-Command @invokeParams -ScriptBlock { Get-AppxPackage -AllUsers }
+	# If there was an issue getting the list, write it out and move on.
+	if($storeAppsList.Count -eq 0) {
+		Write-Host "~~~~~ Store apps couldn't be captured for this client. Please verify administrative permissions."
+	}; $ErrorActionPreference = $priorELVL
+	$reportStoreApps = @{}
+	# Iterate the list of store apps.
+	foreach($app in $storeAppsList) {
+		$keyname = "$($app.InstallLocation)"
+		$i = 0  #Keep track of the "layer"
+		for(; $i -lt 4; $i++) {
+			# Allow up to 4 nested key names, each successive duplicate being suffixed by an extra underscore.
+			if($reportStoreApps.ContainsKey($keyname)) { $keyname += "_" }
 		}
-		$ErrorActionPreference = $priorELVL
-		foreach($app in $appsList) {
-			$keyname = "$($app.InstallLocation)"
-			$i = 0  #Keep track of the "layer"
-			for(; $i -lt 4; $i++) {
-				# Allow up to 4 nested key names, each successive duplicate being suffixed by an extra underscore.
-				if($storeAppsObject.ContainsKey($keyname)) { $keyname += "_" }
+		# NOTE: This section has added 15-20 seconds in per-client processing.
+		$storeAppsInfo = ($storeAppsList | Where-Object -Property InstallLocation -eq "$($app.InstallLocation)" `
+			| Select-Object Name, Architecture, InstallLocation, Status, PublisherId) #json conversions WERE here
+		$perUserAppStatus = ($storeAppsList | Where-Object -Property InstallLocation -eq "$($app.InstallLocation)" `
+			| Select-Object PackageUserInformation) | ForEach-Object {
+				[System.String]::Join("; ", @("App Status:", [string]@(("$($_.PackageUserInformation)" `
+					| Select-String -Pattern '\[[\\\w]+\]\s*\:\s+\w+' -AllMatches).Matches.Value) | Out-String))
 			}
-			# NOTE: This section has added 15-20 seconds in per-client processing.
-			$storeAppsInfo = ($appsList | Where-Object -Property InstallLocation -eq "$($app.InstallLocation)" `
-				| Select-Object Name, Architecture, InstallLocation, Status, PublisherId | ConvertTo-Json | ConvertFrom-Json)
-			$perUserAppStatus = ($appsList | Where-Object -Property InstallLocation -eq "$($app.InstallLocation)" `
-				| Select-Object PackageUserInformation) | ForEach-Object {
-					[System.String]::Join("; ", @("App Status:", [string]@(("$($_.PackageUserInformation)" `
-						| Select-String -Pattern '\[[\\\w]+\]\s*\:\s+\w+' -AllMatches).Matches.Value) | Out-String))
-				}
-			# Add the PackageUserInformation property (with extracted names/statuses) into the final object.
-			$storeAppsInfo | Add-Member -Name PackageUserInformation -Type NoteProperty -Value "$($perUserAppStatus)"
-			$storeAppsObject.Add($keyname, $storeAppsInfo)
-		}
-		return $storeAppsObject
+		# Add the PackageUserInformation property (with extracted names/statuses) into the final object.
+		$storeAppsInfo | Add-Member -Name PackageUserInformation -Type NoteProperty -Value "$($perUserAppStatus)"
+		$reportStoreApps.Add($keyname, $storeAppsInfo)
 	}
 	# Get an index of store apps based on the InstallLocation.
-	$storeAppsIndex = Invoke-Command @invokeParams -ScriptBlock {
-		$storeAppsArray = [System.Collections.ArrayList]@()
-		$priorELVL = $ErrorActionPreference; $ErrorActionPreference = 'SilentlyContinue'   # shhhh...
-		$appsList = Get-AppxPackage -AllUsers
-		if($? -ne $True) {
-			Write-Host "~~~~~ Store apps couldn't be captured for this client. Please verify administrative permissions."
-		}
-		$ErrorActionPreference = $priorELVL
-		$listofApps | ForEach-Object {
-			$keyname = "$($_.InstallLocation)"
-			for($i = 0; $i -lt 4; $i++) { if($storeAppsArray.Contains($keyname)) { $keyname += "_" } }
-			$storeAppsArray += $keyname
-		}
-		return $storeAppsArray
+	$storeAppsIndex = [System.Collections.ArrayList]@()
+	$storeAppsList | ForEach-Object {
+		$keyname = "$($_.InstallLocation)"
+		for($i = 0; $i -lt 4; $i++) { if($storeAppsIndex.Contains($keyname)) { $keyname += "_" } }
+		$storeAppsIndex += $keyname
 	}
 	$storeAppsIndexFIX = @(); $storeAppsIndexFIX += $storeAppsIndex | ForEach-Object { [string]$_ }
 	# Add it to the report.
@@ -929,7 +913,7 @@ foreach($client in $clientAddresses) {
 	# -----------------------------------------
 	# Compare InstalledApps.
 	Compare-Deltas `
-		-CompareProperties @("DisplayName", "DisplayVersion", "Publisher", "InstallDate", "InstallLocation") `
+		-CompareProperties $TrackedValues.InstalledApps `
 		-DeltasObjChanged $deltasObject.ChangedInstalledApps `
 		-DeltasObjNew $deltasObject.NewInstalledApps `
 		-DeltasObjRemoved $deltasObject.RemovedInstalledApps `
@@ -1106,25 +1090,25 @@ if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 			$clientDeltas.ChangedStoreApps.Keys | ForEach-Object {
 				$clientDeltas.ChangedStoreApps.$_.Status = `
 					(Interpret-Flags -FlagSet $SA_STATUS_CODES -GivenValue $statuscode).TrimEnd()
-				$archcode = $clientDeltas.ChangedStoreApps.$_.Architecture
-				$clientDeltas.ChangedStoreApps.$_.Architecture = $ARCHITECTURE_CODES["code$($archcode)"]
+				#$archcode = $clientDeltas.ChangedStoreApps.$_.Architecture
+				#$clientDeltas.ChangedStoreApps.$_.Architecture = $ARCHITECTURE_CODES["code$($archcode)"]
 				$statuscode = $clientDeltas.ChangedStoreApps.$_.Status_prior
 				$clientDeltas.ChangedStoreApps.$_.Status_prior = `
 					(Interpret-Flags -FlagSet $SA_STATUS_CODES -GivenValue $statuscode).TrimEnd()
-				$archcode = $clientDeltas.ChangedStoreApps.$_.Architecture_prior
-				$clientDeltas.ChangedStoreApps.$_.Architecture_prior = $ARCHITECTURE_CODES["code$($archcode)"]
+				#$archcode = $clientDeltas.ChangedStoreApps.$_.Architecture_prior
+				#$clientDeltas.ChangedStoreApps.$_.Architecture_prior = $ARCHITECTURE_CODES["code$($archcode)"]
 			}
 			$clientDeltas.RemovedStoreApps.Keys | ForEach-Object {
 				$clientDeltas.RemovedStoreApps.$_.Status = `
 					(Interpret-Flags -FlagSet $SA_STATUS_CODES -GivenValue $statuscode).TrimEnd()
-				$archcode = $clientDeltas.RemovedStoreApps.$_.Architecture
-				$clientDeltas.RemovedStoreApps.$_.Architecture = $ARCHITECTURE_CODES["code$($archcode)"]
+				#$archcode = $clientDeltas.RemovedStoreApps.$_.Architecture
+				#$clientDeltas.RemovedStoreApps.$_.Architecture = $ARCHITECTURE_CODES["code$($archcode)"]
 			}
 			$clientDeltas.NewStoreApps.Keys | ForEach-Object {
 				$clientDeltas.NewStoreApps.$_.Status = `
 					(Interpret-Flags -FlagSet $SA_STATUS_CODES -GivenValue $statuscode).TrimEnd()
-				$archcode = $clientDeltas.NewStoreApps.$_.Architecture
-				$clientDeltas.NewStoreApps.$_.Architecture = $ARCHITECTURE_CODES["code$($archcode)"]
+				#$archcode = $clientDeltas.NewStoreApps.$_.Architecture
+				#$clientDeltas.NewStoreApps.$_.Architecture = $ARCHITECTURE_CODES["code$($archcode)"]
 			}
 			$NOTIFBODY_Rpt += Add-To-Report `
 				-NewObject $clientDeltas.NewStoreApps -RemovedObject $clientDeltas.RemovedStoreApps `

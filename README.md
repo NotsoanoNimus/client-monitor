@@ -1,6 +1,9 @@
 # Client-Monitor
-A PowerShell script to monitor a client environment for changes (services, startup applications, store apps, scheduled tasks, &amp; installed apps) from a central administrative server, generating reports to view each change per workstation/client.
+A PowerShell script to monitor a client environment for changes (services, startup applications, store apps, scheduled tasks, &amp; installed apps) from a central administrative server, generating reports to view each change per workstation/client in one aggregated email notification.
 This script is designed to have monitoring capabilities at the _shortest interval of once per minute_ for reporting changes.
+
+When running the script, ensure that the host is an administrator for the target machines across the network, and that the selected hosts have _WinRM_ enabled for execution of remote PowerShell commands.
+The security of this (Windows Firewall, SIEM, etc) is completely up to you.
 
 
 ## Monitored Locations & Properties
@@ -57,7 +60,7 @@ Take care and precaution that the _relay server_ used in the Tweaks section belo
 
 ## Tweaks
 The _"Tweaks_" subsection near the top of the script is used to define static variables that are later expanded in the script, to change its functionality.
-Each tweak will include its own descriptive (if it's variable name isn't descriptive enough).
+Each tweak will include its own description (if its variable name isn't descriptive enough).
 
 #### Current Tweaks Variables
 + **$DomainSuffix** -- The internal domain suffix of the given hostnames.
