@@ -25,13 +25,13 @@ Such is inevitable, and it's generally easy to pick up on this change in the not
 - Exclusively uses the `Get-AppxPackage` cmdlet to extract this information, collecting store apps for each user profile on the workstation.
 
 **Installed Applications `$(PSChildName)_{HKLM | HKCU | 6432Node}`**
-To check for installed applications, the script monitors three registry locations using the `Get-ItemProperty` cmdlet.
+- To check for installed applications, the script monitors three registry locations using the `Get-ItemProperty` cmdlet.
 - Local Machine: `HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*`
 - Current User: `HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*`
 - 64-to-32-bit Applications: `HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*`
 
 **Startup Applications `$(Name)_$(User)`**
-Startup applications can be found in the registry and as an instance of a type _Win32_StartupCommand_.
+- Startup applications can be found in the registry and as an instance of a type _Win32_StartupCommand_.
 - `Get-CimInstance Win32_StartupCommand`
 - `Get-ItemProperty HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run`
 
