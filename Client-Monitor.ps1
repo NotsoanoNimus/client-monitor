@@ -75,7 +75,8 @@ $NotificationOnNoChange = $True
 $NotificationsBodyOnNoChange = @"
 <h1 class='NoChangeHeader'>No Client Changes</h1>`n
 <p class='SummaryText'><b><u>QUERY</u></b>: '$DomainUserFilter'</p>`n
-<p class='SummaryText'>There were no client changes detected on the network for client machines.</p>
+<p class='SummaryText'>There were no changes to display for the client machines.<br />`n
+Either the items that <i>did</i> change were filtered, or nothing has changed at all.</p>
 "@
 
 # By default, all notifications are sent as HTML.
@@ -117,12 +118,28 @@ $NotificationsHTMLWrapper = @"
 </html>
 "@
 
+# The header/upper section used in notifications that will have some changes noted for clients.
+#    The actual Body text is appended to this value later, forming the [[BODYTEXT]] for the HTML wrapper.
+$NotificationsChangesBodyHeader = "<h1>Summary of Environment Changes</h1>`n`n"
+$NotificationsChangesBodyHeader += "<p class='SummaryText'><b><u>QUERY</u></b>: '$DomainUserFilter'</p>`n"
+$NotificationsChangesBodyHeader += "<p class='SummaryText'>There were changes detected on the network for the following clients. "
+$NotificationsChangesBodyHeader += "Anything in <span class='$NotificationsHTMLPriorValClass'>red</span> is a removed property, "
+$NotificationsChangesBodyHeader += "and anything in <span class='$NotificationsHTMLNewValClass'>blue</span> has been added.</p>`n`n"
 
-# Tracked values across each given category. These values are used in the "Select-Object" method on the queries
-#    for each item in the set returned per category, and also in the later comparisons.
+
+<# Tracked values across each given category. These values are used in the "Select-Object" method on the queries
+ #    for each item in the set returned per category, and also in the later comparisons.
+ # NOTE: Do not include "special" fields used in the script below. Off-limits field include:
+ #    STOREAPPS : PackageUserInformation
+ #>
 $TrackedValues = @{
 	InstalledApps = @("DisplayName", "DisplayVersion", "Publisher", "InstallDate", "InstallLocation")
+	Services = @("DisplayName", "ServiceName", "ServiceType", "StartType", "Status")
+	StoreApps = @("Name", "Architecture", "InstallLocation", "Status", "PublisherId", "PackageFullName")
+	StartupApps = @("Command", "Location", "User")
+	ScheduledTasks = @("TaskName", "TaskPath", "Author", "SecurityDescriptor")
 }
+
 
 <# The events or triggers used for notifications to be dispatched to the notifications address.
  #    This section effectively turns them on/off. Names are descriptive enough for the purpose.
@@ -160,8 +177,7 @@ $NotificationsFilters = @{
 	Services = @{
 		New = @()
 		Removed = @()
-		Changed = @("group policy*", "*windows update*")
-		Changed = @("*client license*", "*group policy*", "windows update*")
+		Changed = @()
 	}
 	StoreApps = @{
 		New = @()
@@ -185,7 +201,6 @@ $NotificationsFilters = @{
 ###################################################
 #                    FUNCTIONS                    #
 ###################################################
-
 
 
 # Output information about issues encountered in the script, based on the passed code, and exit with the given code.
@@ -419,6 +434,8 @@ Function Add-To-Report() {
 				continue
 			}
 			$fillVar = $NewObject.$new | ConvertTo-HTML -Fragment
+			# Any td tags with nothing in between should be manually filled in with a "null" piece of text, to avoid empty spots.
+			$fillVar = $fillVar -Replace '<td>(<span class=.*?></span>)?</td>', '<td>null</td>'
 			$NOTIFSXN_New += "<div class='DiffsSection'>`n"
 			$NOTIFSXN_New += "$spanNewItem<b>Name</b>: $new</span><br />`n"
 			$NOTIFSXN_New += "$spanNewItem$($fillVar)</span><br />`n"
@@ -442,6 +459,8 @@ Function Add-To-Report() {
 				continue
 			}
 			$fillVar = $RemovedObject.$removed | ConvertTo-HTML -Fragment
+			# Any td tags with nothing in between should be manually filled in with a "null" piece of text, to avoid empty spots.
+			$fillVar = $fillVar -Replace '<td>(<span class=.*?></span>)?</td>', '<td>null</td>'
 			$NOTIFSXN_Removed += "<div class='DiffsSection'>`n"
 			$NOTIFSXN_Removed += "$spanPriorItem<b>Name</b>: $removed</span><br />`n"
 			$NOTIFSXN_Removed += "$spanPriorItem$($fillVar)</span><br />`n"
@@ -471,6 +490,14 @@ Function Add-To-Report() {
 			$tableNews = @{}; $tablePriors = @{}
 			($ChangedObject.$changed | Get-Member -Type NoteProperty | Where-Object -Property Name -NotLike *_prior).Name `
 				| Sort-Object | ForEach-Object {
+					# Manually fill in the "null" spots via string assignment here. This must be different than the above "Replace"
+					#    method because the color highlight (prior vs. new) would be great to have instead of plain text.
+					if($ChangedObject.$changed.$_ -eq $null -Or $ChangedObject.$changed.$_ -eq "") {
+						$ChangedObject.$changed.$_ = "null"
+					}
+					if($ChangedObject.$changed."$($_)_prior" -eq $null -Or $ChangedObject.$changed."$($_)_prior" -eq "") {
+						$ChangedObject.$changed."$($_)_prior" = "null"
+					}
 				# Each key will correspond to a fully-HTML value for the "output table" object.
 				$diffHighlight=$diffHighlightTerm = ""
 				# If the two specific values are different, define a stylization class and wrap the text with it.
@@ -507,9 +534,11 @@ Function Add-To-Report() {
 
 # Interpret compounding flags using a logical AND. Used for report generation.
 Function Interpret-Flags() {
-	param( [PSCustomObject]$FlagSet = @{}, $GivenValue )
+	param( [PSCustomObject]$FlagSet = @{}, $GivenValue, [switch]$Binary )
 	# If the passed argument for "GivenValue" isn't numeric, then leave with "GivenValue" as the return.
 	if($GivenValue.GetType().Name -ne "Int32") { return $GivenValue }
+	# If the Binary switch is NOT used, just return the single value from the FLAGSET variable.
+	if($Binary -ne $True) { return $FlagSet["code$($GivenValue)"] }
 	# Can't do a bitwise AND against a 0, so just automatically default to the flagset's 0 code.
 	if($GivenValue -eq 0) { return $FlagSet["code0"] }
 	# Initialize the return variable.
@@ -684,7 +713,7 @@ foreach($client in $clientAddresses) {
 	 #   PSChildName is the registry key's name. So if there is not any other info, at least get the key name.
 	 #>
 	 
-	Write-Host "-- Collecting information about the target machine."
+	Write-Host "-- Collecting information about the target machine and building a report."
 	
 	
 	# -----------------------------------------
@@ -714,7 +743,7 @@ foreach($client in $clientAddresses) {
 		$installedAppsIndex += $keyname
 		# Create the key in the hashtable.
 		$reportInstalledApps.Add($keyname, ($installedAppsObject | Where-Object -Property PSPath -eq "$($app.PSPath)" `
-			| Select-Object $TrackedValues.InstalledApps | ConvertTo-Json | ConvertFrom-Json))
+			| Select-Object $TrackedValues.InstalledApps))
 	}
 	# Add the items to the new report.
 	$FullReport.Add("InstalledAppsIndex", $installedAppsIndex)
@@ -733,15 +762,16 @@ foreach($client in $clientAddresses) {
 	$reportStoreApps = @{}
 	# Iterate the list of store apps.
 	foreach($app in $storeAppsList) {
-		$keyname = "$($app.InstallLocation)"
+		$keyname = "$($app.InstallLocation)_$($app.PackageFullName)"
 		$i = 0  #Keep track of the "layer"
 		for(; $i -lt 4; $i++) {
 			# Allow up to 4 nested key names, each successive duplicate being suffixed by an extra underscore.
 			if($reportStoreApps.ContainsKey($keyname)) { $keyname += "_" }
 		}
-		# NOTE: This section has added 15-20 seconds in per-client processing.
+		# Get all the fields from the StoreApps trackers that are needed to build the report.
 		$storeAppsInfo = ($storeAppsList | Where-Object -Property InstallLocation -eq "$($app.InstallLocation)" `
-			| Select-Object Name, Architecture, InstallLocation, Status, PublisherId) #json conversions WERE here
+			| Select-Object $TrackedValues.StoreApps)
+		# Additionally, ALWAYS track the PackageUserInformation to find out who has which apps, and their statuses.
 		$perUserAppStatus = ($storeAppsList | Where-Object -Property InstallLocation -eq "$($app.InstallLocation)" `
 			| Select-Object PackageUserInformation) | ForEach-Object {
 				[System.String]::Join("; ", @("App Status:", [string]@(("$($_.PackageUserInformation)" `
@@ -758,96 +788,81 @@ foreach($client in $clientAddresses) {
 		for($i = 0; $i -lt 4; $i++) { if($storeAppsIndex.Contains($keyname)) { $keyname += "_" } }
 		$storeAppsIndex += $keyname
 	}
-	$storeAppsIndexFIX = @(); $storeAppsIndexFIX += $storeAppsIndex | ForEach-Object { [string]$_ }
 	# Add it to the report.
-	$FullReport.Add("StoreAppsIndex", $storeAppsIndexFIX)
+	$FullReport.Add("StoreAppsIndex", $storeAppsIndex)
 	$FullReport.Add("StoreApps", $reportStoreApps)
 	
 	
 	# -----------------------------------------
 	# Harvest startup applications.
-	$reportStartupApps = Invoke-Command @invokeParams -ScriptBlock {
-		$startupAppsObject = @{}
-		# Get Startup apps using the below command. This will catch everything except 6432 Nodes in the registry.
-		$w32StartupCmd = Get-CimInstance Win32_StartupCommand
-		foreach($startupapp in $w32StartupCmd) {
-			$startupAppsObject.Add("$($startupapp.Name)_$($startupapp.User)", `
-				($w32StartupCmd | Where-Object -Property Name -eq "$($startupapp.Name)" `
-					| Where-Object -Property User -eq "$($startupapp.User)" `
-					| Select-Object Command, Location, User | ConvertTo-Json | ConvertFrom-Json))
-		}
-		# Get Startup apps from the location mentioned above.
-		$6432NodeItems = (Get-ItemProperty HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run) `
+	# Get Startup apps using the below command. This will catch everything except 6432 Nodes in the registry.
+	$w32StartupCmd = Invoke-Command @invokeParams -ScriptBlock { Get-CimInstance Win32_StartupCommand }
+	# Define the two objects to insert into the main report hashtable.
+	$reportStartupApps = @{}; $startupAppsIndex = @()
+	foreach($startupapp in $w32StartupCmd) {
+		$keyname = "$($startupapp.Name)_$($startupapp.User)"
+		$reportStartupApps.Add($keyname, `
+			($w32StartupCmd | Where-Object -Property Name -eq "$($startupapp.Name)" `
+				| Where-Object -Property User -eq "$($startupapp.User)" `
+				| Select-Object $TrackedValues.StartupApps))
+		$startupAppsIndex += $keyname
+	}
+	# Get Startup apps from the location mentioned above.
+	$6432NodeItems = Invoke-Command @invokeParams -ScriptBlock {
+		(Get-ItemProperty HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run) `
 			| Get-Member -Type NoteProperty | Where-Object -Property Name -NotLike PS*
-		# Add each one onto the startup apps that are registered for the client.
-		foreach($item in $6432NodeItems) {
-			$startupAppsObject.Add("$($item.Name)_6432-NODE", `
-				@{Command="$($item.Definition -Replace 'string ')"; Location="64-to-32_Registry_Node"; User="6432-NODE"})
+	}
+	# Add each one onto the startup apps that are registered for the client.
+	foreach($item in $6432NodeItems) {
+		$keyname = "$($item.Name)_6432-NODE"
+		$addedInformation = @{}
+		foreach($value in $TrackedValues.StartupApps) {
+			if($value -eq "Command") {
+				$addedInformation.Add($value, "$($item.Definition -Replace 'string ')")
+			} elseif($value -eq "Location") {
+				$addedInformation.Add($value, "64-to-32_Registry_Node")
+			} elseif($value -eq "User") {
+				$addedInformation.Add($value, "6432-NODE")
+			} else { $addedInformation.Add($value, "") }
 		}
-		return $startupAppsObject
+		$reportStartupApps.Add($keyname, $addedInformation)
+		$startupAppsIndex += $keyname
 	}
-	# Index StartupApps by the "Name" key.
-	$startupAppsIndex = Invoke-Command @invokeParams -ScriptBlock {
-		$startupAppsArray = [System.Collections.ArrayList]@()
-		Get-CimInstance Win32_StartupCommand | ForEach-Object { $startupAppsArray += "$($_.Name)_$($_.User)" }
-		Get-ItemProperty HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run `
-			| Get-Member -Type NoteProperty | Where-Object -Property Name -NotLike PS* | ForEach-Object {
-				$startupAppsArray += "$($_.Name)_6432-NODE"
-			}
-		return $startupAppsArray
-	}
-	$startupAppsIndexFIX = @(); $startupAppsIndexFIX += $startupAppsIndex | ForEach-Object { [string]$_ }
 	# Add it to the report.
-	$FullReport.Add("StartupAppsIndex", $startupAppsIndexFIX)
+	$FullReport.Add("StartupAppsIndex", $startupAppsIndex)
 	$FullReport.Add("StartupApps", $reportStartupApps)
 		
 	
 	# -----------------------------------------
 	# Get a list of services (all of them).
-	$reportServices = Invoke-Command @invokeParams -ScriptBlock {
-		$svcObject = @{}
-		$svcs = Get-Service
-		foreach($service in $svcs) {
-			$svcObject.Add("$($service.DisplayName)_$($service.Name)", `
-				($svcs | Where-Object -Property DisplayName -eq "$($service.DisplayName)" `
-					| Where-Object -Property Name -eq "$($service.Name)" `
-					| Select-Object DisplayName, ServiceName, ServiceType, StartType, Status | ConvertTo-Json | ConvertFrom-Json))
-		}
-		return $svcObject
+	$svcs = Invoke-Command @invokeParams -ScriptBlock { Get-Service }
+	$reportServices = @{}; $servicesIndex = @()
+	foreach($service in $svcs) {
+		$keyname = "$($service.DisplayName)_$($service.Name)"
+		$reportServices.Add($keyname, `
+			($svcs | Where-Object -Property DisplayName -eq "$($service.DisplayName)" `
+				| Where-Object -Property Name -eq "$($service.Name)" `
+				| Select-Object $TrackedValues.Services))
+		$servicesIndex += $keyname
 	}
-	# Get an index of all "DisplayName_Name" unique keys.
-	$servicesIndex = Invoke-Command @invokeParams -ScriptBlock {
-		$svcNameArray = [System.Collections.ArrayList]@()
-		Get-Service | ForEach-Object { $svcNameArray += "$($_.DisplayName)_$($_.Name)" }
-		return $svcNameArray
-	}
-	$servicesIndexFIX = @(); $servicesIndexFIX += $servicesIndex | ForEach-Object { [string]$_ }
 	# Add it to the report.
-	$FullReport.Add("ServicesIndex", $servicesIndexFIX)
+	$FullReport.Add("ServicesIndex", $servicesIndex)
 	$FullReport.Add("Services", $reportServices)
 	
 	
 	# -----------------------------------------
 	# Get scheduled tasks and jobs.
-	$reportTasks = Invoke-Command @invokeParams -ScriptBlock {
-		$taskObject = @{}
-		$taskList = Get-ScheduledTask
-		foreach($task in $taskList) {
-			$taskObject.Add("$($task.URI)", `
-				($taskList | Where-Object -Property URI -eq "$($task.URI)" `
-					| Select-Object TaskName, Author, SecurityDescriptor, TaskPath | ConvertTo-Json | ConvertFrom-Json))
-		}
-		return $taskObject
+	$taskList = Invoke-Command @invokeParams -ScriptBlock { Get-ScheduledTask }
+	$reportTasks = @{}; $scheduledTasksIndex = @() 
+	foreach($task in $taskList) {
+		$keyname = "$($task.URI)"
+		$reportTasks.Add($keyname, `
+			($taskList | Where-Object -Property URI -eq "$($task.URI)" `
+				| Select-Object $TrackedValues.ScheduledTasks))
+		$scheduledTasksIndex += $keyname
 	}
-	# Get an index of all "TaskName" keys.
-	$scheduledTasksIndex = Invoke-Command @invokeParams -ScriptBlock {
-		$taskURIArray = [System.Collections.ArrayList]@()
-		Get-ScheduledTask | ForEach-Object { $taskURIArray += "$($_.URI)" }
-		return $taskURIArray
-	}
-	$scheduledTasksIndexFIX = @(); $scheduledTasksIndexFIX += $scheduledTasksIndex | ForEach-Object { [string]$_ }
 	# Add it to the report.
-	$FullReport.Add("ScheduledTasksIndex", $scheduledTasksIndexFIX)
+	$FullReport.Add("ScheduledTasksIndex", $scheduledTasksIndex)
 	$FullReport.Add("ScheduledTasks", $reportTasks)
 	
 	
@@ -873,7 +888,7 @@ foreach($client in $clientAddresses) {
 	# -----------------------------------------
 	# Compare Services.
 	Compare-Deltas `
-		-CompareProperties @("DisplayName", "ServiceName", "ServiceType", "StartType", "Status") `
+		-CompareProperties $TrackedValues.Services `
 		-DeltasObjChanged $deltasObject.ChangedServices `
 		-DeltasObjNew $deltasObject.NewServices `
 		-DeltasObjRemoved $deltasObject.RemovedServices `
@@ -883,7 +898,7 @@ foreach($client in $clientAddresses) {
 	# -----------------------------------------
 	# Compare ScheduledTasks.
 	Compare-Deltas `
-		-CompareProperties @("TaskName", "TaskPath", "Author", "SecurityDescriptor") `
+		-CompareProperties $TrackedValues.ScheduledTasks `
 		-DeltasObjChanged $deltasObject.ChangedScheduledTasks `
 		-DeltasObjNew $deltasObject.NewScheduledTasks `
 		-DeltasObjRemoved $deltasObject.RemovedScheduledTasks `
@@ -892,8 +907,11 @@ foreach($client in $clientAddresses) {
 	
 	# -----------------------------------------
 	# Compare StoreApps.
+	# Add on the static (always-checked) tracker for the StoreApps section.
+	$storeAppsTrackers = $TrackedValues.StoreApps
+	$storeAppsTrackers += "PackageUserInformation"
 	Compare-Deltas `
-		-CompareProperties @("Name", "Architecture", "InstallLocation", "Status", "PublisherId", "PackageUserInformation") `
+		-CompareProperties $storeAppsTrackers `
 		-DeltasObjChanged $deltasObject.ChangedStoreApps `
 		-DeltasObjNew $deltasObject.NewStoreApps `
 		-DeltasObjRemoved $deltasObject.RemovedStoreApps `
@@ -903,7 +921,7 @@ foreach($client in $clientAddresses) {
 	# -----------------------------------------
 	# Compare StartupApps.
 	Compare-Deltas `
-		-CompareProperties @("Command", "Location", "User") `
+		-CompareProperties $TrackedValues.StartupApps `
 		-DeltasObjChanged $deltasObject.ChangedStartupApps `
 		-DeltasObjNew $deltasObject.NewStartupApps `
 		-DeltasObjRemoved $deltasObject.RemovedStartupApps `
@@ -953,11 +971,8 @@ foreach($client in $clientAddresses) {
 # Firstly, check if the $deltas object contains any keys from the operations above.
 #    If not, don't bother generating a notification unless specified in the configuration.
 if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
-	$NOTIFBODY = "<h1>Summary of Environment Changes</h1>`n`n"
-	$NOTIFBODY += "<p class='SummaryText'><b><u>QUERY</u></b>: '$DomainUserFilter'</p>`n"
-	$NOTIFBODY += "<p class='SummaryText'>There were changes detected on the network for the following clients. "
-	$NOTIFBODY += "Anything in <span class='$NotificationsHTMLPriorValClass'>red</span> is a removed property, "
-	$NOTIFBODY += "and anything in <span class='$NotificationsHTMLNewValClass'>blue</span> has been added.</p>`n`n"
+	# Create an outer wrapper for the loop below, to detect if any info is picked up at all.
+	$NOTIFBODY_Wrapper = ""
 	# Now process the information from the deltas and generate a notification if needed.
 	foreach($client in $deltas.Keys) {
 		# Declare a new "tracker" variable/container for all report info returned from the categories.
@@ -999,14 +1014,12 @@ if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 		}
 		
 		# Now that the reachability flags are reviewed, the rest should be easy variable-matching and iterating keys.
-		# This process is repeated almost identically for each object and can probably be modularized later to trim fat.
-		#  --> Get counts of keys in each delta field.
-		#  ----> Count > 0 ? add-to-report : ignore
-		# "New" and "Removed" apps don't need a "comparison" section.
+		#    Use a modularized function to add to the report body if the given category/section is enabled with the triggers.
 		
 		# -----------------------------------------
 		# INSTALLED APPLICATIONS
 		if($NotificationsTriggers.InstalledAppsChange -eq $True) {
+			# Add the gathered information to the report.
 			$NOTIFBODY_Rpt += Add-To-Report `
 				-NewObject $clientDeltas.NewInstalledApps -RemovedObject $clientDeltas.RemovedInstalledApps `
 				-ChangedObject $clientDeltas.ChangedInstalledApps -ItemName "Installed Applications" `
@@ -1016,57 +1029,51 @@ if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 		# -----------------------------------------
 		# SERVICES
 		$STATUS_CODES = @{
-			code1="STOPPED"; code2="START-PENDING"; code3="STOP-PENDING"
-			code4="RUNNING"; code5="CONTINUE"; code6="PAUSE-PENDING"; code7="PAUSED"
+			code1="Stopped"; code2="Start-Pending"; code3="Stop-Pending"
+			code4="Running"; code5="Continue"; code6="Pause-Pending"; code7="Paused"
 			code=""
 		}
-		$START_TYPES = @{
-			code0="BOOT"; code1="SYSTEM"; code2="AUTOMATIC"
-			code3="MANUAL"; code4="DISABLED"
-			code=""
-		}
-		# These are FLAGS (multiple values that can be compounded).
+		$START_TYPES = @{ code0="Boot"; code1="System"; code2="Automatic"; code3="Manual"; code4="Disabled"; code="" }
 		$SERVICE_TYPES = @{
-			code1="KERNEL-DRIVER"; code2="FS-DRIVER"; code4="HW-DRIVER"
-			code8="FS-STARTUP-DRIVER"; code16="NORMAL"; code32="SHARED"; code256="INTERACTIVE"
+			code1="Kernel-Driver"; code2="FS-Driver"; code4="HW-Driver"
+			code8="FS-Startup-Driver"; code16="Normal"; code32="Shared"; code256="Interactive"
 			code=""
 		}
 		if($NotificationsTriggers.ServicesChange -eq $True) {
-			# Change numeric codes to their equivalent status.
+			# Change numeric codes to their equivalent values IF the value in each item is numeric.
+			#    This usually only happens when scanning localhost, but others using the script may encounter them.
 			$clientDeltas.ChangedServices.Keys | ForEach-Object {
-				$statuscode = $clientDeltas.ChangedServices.$_.Status
-				$startcode = $clientDeltas.ChangedServices.$_.StartType
-				$svccode = $clientDeltas.ChangedServices.$_.ServiceType
-				$clientDeltas.ChangedServices.$_.Status = $STATUS_CODES["code$($statuscode)"]
-				$clientDeltas.ChangedServices.$_.StartType = $START_TYPES["code$($startcode)"]
-				$clientDeltas.ChangedServices.$_.ServiceType = `
-					(Interpret-Flags -FlagSet $SERVICE_TYPES -GivenValue $svccode).TrimEnd()
-				$statuscode = $clientDeltas.ChangedServices.$_.Status_prior
-				$startcode = $clientDeltas.ChangedServices.$_.StartType_prior
-				$svccode = $clientDeltas.ChangedServices.$_.ServiceType_prior
-				$clientDeltas.ChangedServices.$_.Status_prior = $STATUS_CODES["code$($statuscode)"]
-				$clientDeltas.ChangedServices.$_.StartType_prior = $START_TYPES["code$($startcode)"]
-				$clientDeltas.ChangedServices.$_.ServiceType_prior = `
-					(Interpret-Flags -FlagSet $SERVICE_TYPES -GivenValue $svccode).TrimEnd()
+				$clientDeltas.ChangedServices.$_.Status = (Interpret-Flags -FlagSet $STATUS_CODES `
+					-GivenValue $clientDeltas.ChangedServices.$_.Status).TrimEnd()
+				$clientDeltas.ChangedServices.$_.StartType = (Interpret-Flags -FlagSet $START_TYPES `
+					-GivenValue $clientDeltas.ChangedServices.$_.StartType).TrimEnd()
+				$clientDeltas.ChangedServices.$_.ServiceType = (Interpret-Flags -FlagSet $SERVICE_TYPES `
+					-GivenValue $clientDeltas.ChangedServices.$_.ServiceType -Binary).TrimEnd()
+				# Begin priors.
+				$clientDeltas.ChangedServices.$_.Status_prior = (Interpret-Flags -FlagSet $STATUS_CODES `
+					-GivenValue $clientDeltas.ChangedServices.$_.Status_prior).TrimEnd()
+				$clientDeltas.ChangedServices.$_.StartType_prior = (Interpret-Flags -FlagSet $START_TYPES `
+					-GivenValue $clientDeltas.ChangedServices.$_.StartType_prior).TrimEnd()
+				$clientDeltas.ChangedServices.$_.ServiceType_prior = (Interpret-Flags -FlagSet $SERVICE_TYPES `
+					-GivenValue $clientDeltas.ChangedServices.$_.ServiceType_prior -Binary).TrimEnd()
 			}
 			$clientDeltas.RemovedServices.Keys | ForEach-Object {
-				$statuscode = $clientDeltas.RemovedServices.$_.Status
-				$startcode = $clientDeltas.RemovedServices.$_.StartType
-				$svccode = $clientDeltas.RemovedServices.$_.ServiceType
-				$clientDeltas.RemovedServices.$_.Status = $STATUS_CODES["code$($statuscode)"]
-				$clientDeltas.RemovedServices.$_.StartType = $START_TYPES["code$($startcode)"]
-				$clientDeltas.RemovedServices.$_.ServiceType = `
-					(Interpret-Flags -FlagSet $SERVICE_TYPES -GivenValue $svccode).TrimEnd()
+				$clientDeltas.RemovedServices.$_.Status = (Interpret-Flags -FlagSet $STATUS_CODES `
+					-GivenValue $clientDeltas.RemovedServices.$_.Status).TrimEnd()
+				$clientDeltas.RemovedServices.$_.StartType = (Interpret-Flags -FlagSet $START_TYPES `
+					-GivenValue $clientDeltas.RemovedServices.$_.StartType).TrimEnd()
+				$clientDeltas.RemovedServices.$_.ServiceType = (Interpret-Flags -FlagSet $SERVICE_TYPES `
+					-GivenValue $clientDeltas.RemovedServices.$_.ServiceType -Binary).TrimEnd()
 			}
 			$clientDeltas.NewServices.Keys | ForEach-Object {
-				$statuscode = $clientDeltas.NewServices.$_.Status
-				$startcode = $clientDeltas.NewServices.$_.StartType
-				$svccode = $clientDeltas.NewServices.$_.ServiceType
-				$clientDeltas.NewServices.$_.Status = $STATUS_CODES["code$($statuscode)"]
-				$clientDeltas.NewServices.$_.StartType = $START_TYPES["code$($startcode)"]
-				$clientDeltas.NewServices.$_.ServiceType = `
-					(Interpret-Flags -FlagSet $SERVICE_TYPES -GivenValue $svccode).TrimEnd()
+				$clientDeltas.NewServices.$_.Status = (Interpret-Flags -FlagSet $STATUS_CODES `
+					-GivenValue $clientDeltas.NewServices.$_.Status).TrimEnd()
+				$clientDeltas.NewServices.$_.StartType = (Interpret-Flags -FlagSet $START_TYPES `
+					-GivenValue $clientDeltas.NewServices.$_.StartType).TrimEnd()
+				$clientDeltas.NewServices.$_.ServiceType = (Interpret-Flags -FlagSet $SERVICE_TYPES `
+					-GivenValue $clientDeltas.NewServices.$_.ServiceType -Binary).TrimEnd()
 			}
+			# Add the gathered information to the report.
 			$NOTIFBODY_Rpt += Add-To-Report `
 				-NewObject $clientDeltas.NewServices -RemovedObject $clientDeltas.RemovedServices `
 				-ChangedObject $clientDeltas.ChangedServices -ItemName "Services" `
@@ -1076,40 +1083,40 @@ if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 		# -----------------------------------------
 		# STORE APPS
 		$SA_STATUS_CODES = @{
-			code0="OK"; code1="LICENSE-ISSUE"; code2="MODIFIED"; code4="TAMPERED"
-			code8="DISABLED"; code16="PACKAGE-OFFLINE"; code32="DEPLOYMENT"
-			code64="DEPENDENCY-ISSUE"; code128="DATA-OFFLINE"; code256="PARTIALLY-STAGED"
-			code512="NOT-AVAILABLE"; code1024="SERVICING"; code2048="NEED-REMEDIATION"
+			code0="Ok"; code1="License-Issue"; code2="Modified"; code4="Tampered"
+			code8="Disabled"; code16="Package-Offline"; code32="Deployment"
+			code64="Dependency-Issue"; code128="Data-Offline"; code256="Partially-Staged"
+			code512="Not-Available"; code1024="Servicing"; code2048="Needs-Remediation"
 			code=""
 		}
-		$ARCHITECTURE_CODES = @{
-			code0="x86"; code5="ARM"; code9="x64"; code11="Neutral"; code65535="UNKNOWN"; code=""
-		}
+		$ARCHITECTURE_CODES = @{ code0="X86"; code5="ARM"; code9="X64"; code11="Neutral"; code65535="Unknown"; code="" }
 		if($NotificationsTriggers.StoreAppsChange -eq $True) {
-			# Change numeric codes to their equivalent values.
+			# Change numeric codes to their equivalent values IF the value in each item is numeric.
+			#    This usually only happens when scanning localhost, but others using the script may encounter them.
 			$clientDeltas.ChangedStoreApps.Keys | ForEach-Object {
-				$clientDeltas.ChangedStoreApps.$_.Status = `
-					(Interpret-Flags -FlagSet $SA_STATUS_CODES -GivenValue $statuscode).TrimEnd()
-				#$archcode = $clientDeltas.ChangedStoreApps.$_.Architecture
-				#$clientDeltas.ChangedStoreApps.$_.Architecture = $ARCHITECTURE_CODES["code$($archcode)"]
-				$statuscode = $clientDeltas.ChangedStoreApps.$_.Status_prior
-				$clientDeltas.ChangedStoreApps.$_.Status_prior = `
-					(Interpret-Flags -FlagSet $SA_STATUS_CODES -GivenValue $statuscode).TrimEnd()
-				#$archcode = $clientDeltas.ChangedStoreApps.$_.Architecture_prior
-				#$clientDeltas.ChangedStoreApps.$_.Architecture_prior = $ARCHITECTURE_CODES["code$($archcode)"]
+				$clientDeltas.ChangedStoreApps.$_.Status = (Interpret-Flags -FlagSet $SA_STATUS_CODES `
+					-GivenValue $clientDeltas.ChangedStoreApps.$_.Status -Binary).TrimEnd()
+				$clientDeltas.ChangedStoreApps.$_.Architecture = (Interpret-Flags -FlagSet $ARCHITECTURE_CODES `
+					-GivenValue $clientDeltas.ChangedStoreApps.$_.Architecture).TrimEnd()
+				# Begin priors.
+				$clientDeltas.ChangedStoreApps.$_.Status_prior = (Interpret-Flags -FlagSet $SA_STATUS_CODES `
+					-GivenValue $clientDeltas.ChangedStoreApps.$_.Status_prior -Binary).TrimEnd()
+				$clientDeltas.ChangedStoreApps.$_.Architecture_prior = (Interpret-Flags -FlagSet $ARCHITECTURE_CODES `
+					-GivenValue $clientDeltas.ChangedStoreApps.$_.Architecture_prior).TrimEnd()
 			}
 			$clientDeltas.RemovedStoreApps.Keys | ForEach-Object {
-				$clientDeltas.RemovedStoreApps.$_.Status = `
-					(Interpret-Flags -FlagSet $SA_STATUS_CODES -GivenValue $statuscode).TrimEnd()
-				#$archcode = $clientDeltas.RemovedStoreApps.$_.Architecture
-				#$clientDeltas.RemovedStoreApps.$_.Architecture = $ARCHITECTURE_CODES["code$($archcode)"]
+				$clientDeltas.RemovedStoreApps.$_.Status = (Interpret-Flags -FlagSet $SA_STATUS_CODES `
+					-GivenValue $clientDeltas.RemovedStoreApps.$_.Status -Binary).TrimEnd()
+				$clientDeltas.RemovedStoreApps.$_.Architecture = (Interpret-Flags -FlagSet $ARCHITECTURE_CODES `
+					-GivenValue $clientDeltas.RemovedStoreApps.$_.Architecture).TrimEnd()
 			}
 			$clientDeltas.NewStoreApps.Keys | ForEach-Object {
-				$clientDeltas.NewStoreApps.$_.Status = `
-					(Interpret-Flags -FlagSet $SA_STATUS_CODES -GivenValue $statuscode).TrimEnd()
-				#$archcode = $clientDeltas.NewStoreApps.$_.Architecture
-				#$clientDeltas.NewStoreApps.$_.Architecture = $ARCHITECTURE_CODES["code$($archcode)"]
+				$clientDeltas.NewStoreApps.$_.Status = (Interpret-Flags -FlagSet $SA_STATUS_CODES `
+					-GivenValue $clientDeltas.NewStoreApps.$_.Status -Binary).TrimEnd()
+				$clientDeltas.NewStoreApps.$_.Architecture = (Interpret-Flags -FlagSet $ARCHITECTURE_CODES `
+					-GivenValue $clientDeltas.NewStoreApps.$_.Architecture).TrimEnd()
 			}
+			# Add the gathered information to the report.
 			$NOTIFBODY_Rpt += Add-To-Report `
 				-NewObject $clientDeltas.NewStoreApps -RemovedObject $clientDeltas.RemovedStoreApps `
 				-ChangedObject $clientDeltas.ChangedStoreApps -ItemName "Store Apps" `
@@ -1119,6 +1126,7 @@ if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 		# -----------------------------------------
 		# STARTUP APPS
 		if($NotificationsTriggers.StartupAppsChange -eq $True) {
+			# Add the gathered information to the report.
 			$NOTIFBODY_Rpt += Add-To-Report `
 				-NewObject $clientDeltas.NewStartupApps -RemovedObject $clientDeltas.RemovedStartupApps `
 				-ChangedObject $clientDeltas.ChangedStartupApps -ItemName "Startup Apps" `
@@ -1128,6 +1136,7 @@ if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 		# -----------------------------------------
 		# SCHEDULED TASKS APPS
 		if($NotificationsTriggers.ScheduledTasksChange -eq $True) {
+			# Add the gathered information to the report.
 			$NOTIFBODY_Rpt += Add-To-Report `
 				-NewObject $clientDeltas.NewScheduledTasks -RemovedObject $clientDeltas.RemovedScheduledTasks `
 				-ChangedObject $clientDeltas.ChangedScheduledTasks -ItemName "Scheduled Tasks" `
@@ -1137,10 +1146,21 @@ if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 		# ---------- BUILD THE ENTIRE SECTION -----------
 		if($NOTIFBODY_Rpt -ne "") {
 			# Inject the hostname of the client into the email digest.
-			$NOTIFBODY += "`n`n<hr /><h2>$client</h2>`n"
-			$NOTIFBODY += $NOTIFBODY_Rpt
+			$NOTIFBODY_Wrapper += "`n`n<hr /><h2>$client</h2>`n"
+			$NOTIFBODY_Wrapper += $NOTIFBODY_Rpt
 		}
 	}
+	
+	# If the notification body is still null, inject the No Client Changes message.
+	#    Otherwise, build the full report.
+	if($NOTIFBODY_Wrapper.Trim() -eq "" -And $NotificationOnNoChange -eq $True) { $NOTIFBODY += $NotificationsBodyOnNoChange }
+	elseif($NOTIFBODY_Wrapper.Trim() -eq "" -And $NotificationOnNoChange -eq $False) { $NOTIFBODY += "No changes detected." }
+	else {
+		# There were changes registered in the wrapper, so add everything to the primary email body.
+		$NOTIFBODY = $NotificationsChangesBodyHeader
+		$NOTIFBODY += $NOTIFBODY_Wrapper
+	}
+	
 	# Send the compiled notification to the target address using the SMTP info provided at the top of the script.
 	$EmailSuccess = Send-Email -RELAYSERVER $NotificationsServer -RELAYPORT $NotificationsServerPort `
 		-FROM $NotificationsSource -TO $NotificationsAddress -SUBJECT $NotificationsSubject -BODY $NOTIFBODY
