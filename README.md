@@ -83,7 +83,7 @@ Each tweak will include its own description (if its variable name isn't descript
 + **$TrackedValues** -- Tracked values across each given category. These values are used in the `Select-Object` method on the queries for each item in the set returned per category, and also in the later **comparisons**. Below are the defaults for each category:
   + _InstalledApps_ : `@("DisplayName", "DisplayVersion", "Publisher", "InstallDate", "InstallLocation")`
   + _Services_ : `@("DisplayName", "ServiceName", "ServiceType", "StartType", "Status")`
-  + _StoreApps_ : `@("Name", "Architecture", "InstallLocation", "Status", "PublisherId")`
+  + _StoreApps_ : `@("Name", "Architecture", "InstallLocation", "Status", "PublisherId", "PackageFullName")`
   + _StartupApps_ : `@("Command", "Location", "User")`
   + _ScheduledTasks_ : `@("TaskName", "TaskPath", "Author", "SecurityDescriptor")`
   + **IMPORTANT**: There are certain fields that are _off limits_ to add to these string arrays. **DO NOT USE THESE IN THE ABOVE TWEAK!** If present, they are listed below for each category:
@@ -110,6 +110,7 @@ Each tweak will include its own description (if its variable name isn't descript
 + **$NotificationsFiltersBlacklist** -- Is the filter a blacklist (default is yes)? If so, anything added to the below object in the target sections is selectively *FILTERED OUT*. Conversely, if set to `$False` (acting as a whitelist) then only the given values/patterns will be allowed.
 + **$NotificationsShowFilteredItem** -- _**Off** by default_. Whether or not to show the text of the below tweak in the generated notification, when an item is filtered out.
 + **$NotificationsFilteredIndicator** -- A string (HTML formatting optional) to insert when an item is filtered from a notification, if the above value is `$True`.
++ **$NotificationFiltersRegex** -- _False by default_. Set the mode for filtering to **regex** instead of wildcard. This will cause the strings entered below to be run against the `-Match` operator rather than the -Like operator. Consider this setting "advanced" and **do not** change this unless you'd like to use regex filtering instead.
 + **$NotificationsFilters** -- Define strings (_wildcards supported_) which should be white/black-listed for allowance into notifications. The strings are **arrays** of patterns. For example: `@("win*","*micro*")` will filter anything starting with `"win"` and anything containing the substring `"micro"`. Sub-field names are pretty self-explanatory.
   + These filters apply to **ALL data fields** in the category and should be used with caution. If a service changes from "Group Policy Service" to "Microsoft GPO Svc" for example, and there's a `"micro*"` filter, you won't know about the change.
   + Despite having a notification filter in place, if using the `DeltasReport` parameter, deltas that were filtered out _can_ still be viewed within the generated Deltas Report.

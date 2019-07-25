@@ -159,6 +159,9 @@ $NotificationsTriggers = @{
 $NotificationsFiltersBlacklist = $True
 # Whether or not to show the text of the below tweak in the generated notification, when an item is filtered out. Default off.
 $NotificationsShowFilteredItem = $False
+# Set the mode for filtering to regex. This will cause the strings entered below to be run against the -Match operator
+#    rather than the -Like operator. Do not change this setting unless you'd like to use regex filtering instead.
+$NotificationFiltersRegex = $False
 # A string (HTML formatting optional) to insert when an item is filtered from a notification, if the above value is $True.
 $NotificationsFilteredIndicator =  "<div class='DiffsSection'><b>[FilteredItem]</b><br /><br /></div>`n"
 <# Define strings (wildcards supported) which should be white/black-listed for allowance into notifications.
@@ -392,7 +395,9 @@ Function Check-Notification-Filter() {
 	foreach($filter in $filters) {
 		# Iterate through the ItemValueHT object's keys to see if it matches the current filter.
 		$filterMatch = @()
-		$ItemValueHT.Keys | ForEach-Object { $filterMatch += ($ItemValueHT.$_ -Like $filter) }
+		if($NotificationFiltersRegex -eq $False) {
+			$ItemValueHT.Keys | ForEach-Object { $filterMatch += ($ItemValueHT.$_ -Like $filter) }
+		} else { $ItemValueHT.Keys | ForEach-Object { $filterMatch += ($ItemValueHT.$_ -Match $filter) } }
 		# If there's a match, immediately notify the script to filter.
 		if($filterMatch.Contains($True)) { return $DoFilter }
 	}
@@ -757,7 +762,7 @@ foreach($client in $clientAddresses) {
 	$storeAppsList = Invoke-Command @invokeParams -ScriptBlock { Get-AppxPackage -AllUsers }
 	# If there was an issue getting the list, write it out and move on.
 	if($storeAppsList.Count -eq 0) {
-		Write-Host "~~~~~ Store apps couldn't be captured for this client. Please verify administrative permissions."
+		Write-Host "~~~~ Store apps couldn't be captured for this client. Please verify administrative permissions."
 	}; $ErrorActionPreference = $priorELVL
 	$reportStoreApps = @{}
 	# Iterate the list of store apps.
@@ -971,6 +976,7 @@ foreach($client in $clientAddresses) {
 # Firstly, check if the $deltas object contains any keys from the operations above.
 #    If not, don't bother generating a notification unless specified in the configuration.
 if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
+	Write-Host "`n`nComparing deltas and generating a notification if applicable." -ForegroundColor White
 	# Create an outer wrapper for the loop below, to detect if any info is picked up at all.
 	$NOTIFBODY_Wrapper = ""
 	# Now process the information from the deltas and generate a notification if needed.
@@ -1186,14 +1192,14 @@ if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 if($DeltasReport -eq $True -And $deltas.Count -gt 0) {
 	$currentTime = (Get-Date -UFormat %Y-%m-%d-%H_%M).toString()
 	Write-Output $deltas | ConvertTo-Json -Depth 3 | Out-File "$ReportsDirectory\DELTAS-$currentTime.txt"
-} elseif($DeltasReport -eq $False -And $deltas.Count -le 0) {
-	Write-Host "No changes were detected across the targeted clients."
+} elseif($deltas.Count -eq 0) {
+	Write-Host "`n`n`nNo changes were detected across the targeted clients." -ForegroundColor Yellow
 }
 
 # Notification that the script is finished.
 Write-Host "`n`n*****" -NoNewLine
 Write-Host " JOB COMPLETE " -NoNewLine -ForegroundColor Green
-Write-Host "*****"
+Write-Host "*****`n"
 
 # Return $deltas in case the person running the script would like to manipulate the given differences.
 return $deltas
