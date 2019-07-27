@@ -130,9 +130,10 @@ Each tweak will include its own description (if its variable name isn't descript
 + **$TrackedFilenameViewLimit** -- How many files to show in the "_most recent_" view in the emailed notification/report. This just presents a sample list of the most recently modified files matching the given pattern, up to the limit set. Recommended max of 20.
 + **$TrackedFilenameLocations** -- Define which places on the target machine's disk should be checked. These are the predefined locations.
   + _UserProfiles_ : Uses all directories in the **Users** folder, typically `C:\Users`, and iterates on a per-user basis.
-  + _System_ : **NOT RECOMMENDED!** Uses `%SYSTEMROOT%`, i.e. `C:\Windows` in most cases, and iterating this directory recursively can take a very long time. You would be better suited to defining either non-recursive or more specific directories in the "custom" variable below.
+  + _SystemFiles_ : **NOT RECOMMENDED!** Uses `%SYSTEMROOT%`, i.e. `C:\Windows` in most cases, and iterating this directory recursively can take a very long time. You would be better suited to defining either non-recursive or more specific directories in the "custom" variable below.
   + _ProgramData_ : **NOT RECOMMENDED!** Uses `%ProgramData%`, i.e. `C:\ProgramData` in most cases. See above for how to use in a more appropriate way.
-+ **$TrackedFilenameLocationsCustom** -- 
++ **$TrackedFilenameLocationsCustom** -- Custom directories to check for certain filename patterns. Key/Value pairs are `[DIRECTORY] = [RECURSE?]` respectively.
+  +  So setting `'C:\Windows' = $True` in the object would order the script to _RECURSIVELY_ check `C:\Windows` for the filename patterns given. Not recommended to do a recursive search in most cases, but just an example.
 + **$TrackedFilenamePatterns** -- The filename patterns (regex) to track across all of the above directories, and the associated "threshold". Note that these regexes allow you full control and are _NOT_ restricted to just filename extension.
   + Keypair/Hashtable format: `'[REGEX]' ----> [THRESHOLD]`
   + Take care with this, as entering `.exe` for example will pick up the filename `processexecute.txt` because the regex isn't specifying the `^` or `$` characters and isn't escaping the `.` wildcard character.

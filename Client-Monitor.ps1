@@ -212,7 +212,7 @@ $TrackedFilenameViewLimit = 10
 # Define which places on the target machine's disk should be checked. Predefined values should be self-explanatory.
 $TrackedFilenameLocations = @{
 	UserProfiles = $True  # Uses all directories in the Users folder, typically "C:\Users", and iterates on a per-uses basis.
-	System = $False  # NOT RECOMMENDED! Uses %SYSTEMROOT%, i.e. "C:\Windows" in most cases.
+	SystemFiles = $False  # NOT RECOMMENDED! Uses %SYSTEMROOT%, i.e. "C:\Windows" in most cases.
 	ProgramData = $False  # NOT RECOMMENDED! Uses %ProgramData%, i.e. "C:\ProgramData" in most cases.
 }
 # Custom directories to check for certain filename patterns. Key/Value pairs are [DIRECTORY]=[RECURSE?] respectively.
@@ -234,7 +234,7 @@ $TrackedFilenamePatterns = @{
 	'\.exe$' = 2
 	'\.bat$' = 2
 	'\.enc(rypt(ed)?)?' = 10
-	'\.txt$' = 10
+	'\.txt$' = 5
 	'\.ini$' = 2
 }
 
@@ -689,8 +689,7 @@ foreach($client in $clientAddresses) {
 		NewStoreApps = @{}; RemovedStoreApps = @{}; ChangedStoreApps = @{}
 		NewStartupApps = @{}; RemovedStartupApps = @{}; ChangedStartupApps = @{}
 		NewScheduledTasks = @{}; RemovedScheduledTasks = @{}; ChangedScheduledTasks = @{}
-		# NEW 07/25
-		FilenameExtensions = @{}
+		FilenameViolations = @{};
 	}
 	# Create a "dummy" (reference) object for the null array.
 	$deltasObjectDummy = $deltasObject | Select-Object *
@@ -797,27 +796,53 @@ foreach($client in $clientAddresses) {
 			}
 			# Add the totals under the "UserProfileCounts" field.
 			$TrackedFiles.Add("UserProfilesCounts", $UserProfileCounts)
-		}
+		} else { $TrackedFiles.Add("UserProfilesCounts", @{}) }
 		
 		# This section should be used with caution, as it may cause a delay in script processing per client.
-		if($TrackedFilenameLocations.System -eq $True) {
+		if($TrackedFilenameLocations.SystemFiles -eq $True) {
 			Write-Host "------ The %SYSTEMROOT% directory (typically 'C:\Windows')"
 			Write-Host "~~~~~~ WARNING: This could add a potentially-large delay in per-client processing."
 			# Recursively get all files in the %SYSTEMROOT% location, from the remote client.
 			$SystemDirContents = Invoke-Command @invokeParams -ScriptBlock {
 				Get-ChildItem -Path $ENV:SYSTEMROOT -Recurse
 			}
-		}
+			$FoundPatterns = @{}
+			foreach($pattern in $TrackedFilenamePatterns.Keys) {
+				if($SystemDirContents -eq $null) { continue }
+				$matchedfiles = ($SystemDirContents | Where-Object -Property Name -Match $pattern)
+				$actualnames = ($matchedfiles | Select-Object FullName -Last $TrackedFilenameViewLimit).FullName
+				$filecount = $actualnames.Count
+				if($filecount -eq $null) { $filecount = 0 }
+				$FoundPatterns.Add($pattern, $filecount)
+				$FoundPatterns.Add("FILES_$($pattern)", $actualnames)
+			}
+			# Create an intermediate object to give this the same nesting as the "user" and "custom" fields.
+			$IntermediateObject = @{}; $IntermediateObject.Add("SystemFiles", $FoundPatterns)
+			$TrackedFiles.Add("SystemFilesCounts", $IntermediateObject)
+		} else { $TrackedFiles.Add("SystemFilesCounts", @{}) }
 		
 		# This section should be used with caution, as it may cause a delay in script processing per client.
 		if($TrackedFilenameLocations.ProgramData -eq $True) {
 			Write-Host "------ The %ProgramData% directory (typically 'C:\ProgramData')"
 			Write-Host "~~~~~~ WARNING: This could add a potentially-large delay in per-client processing."
 			# Recursively get all files in the %ProgramData% location, from the remote client.
-			$SystemDirContents = Invoke-Command @invokeParams -ScriptBlock {
+			$ProgramDataContents = Invoke-Command @invokeParams -ScriptBlock {
 				Get-ChildItem -Path $ENV:ProgramData -Recurse
 			}
-		}
+			$FoundPatterns = @{}
+			foreach($pattern in $TrackedFilenamePatterns.Keys) {
+				if($ProgramDataContents -eq $null) { continue }
+				$matchedfiles = ($ProgramDataContents | Where-Object -Property Name -Match $pattern)
+				$actualnames = ($matchedfiles | Select-Object FullName -Last $TrackedFilenameViewLimit).FullName
+				$filecount = $actualnames.Count
+				if($filecount -eq $null) { $filecount = 0 }
+				$FoundPatterns.Add($pattern, $filecount)
+				$FoundPatterns.Add("FILES_$($pattern)", $actualnames)
+			}
+			# Again, create an intermediate object to give this the same nesting as the "user" and "custom" fields.
+			$IntermediateObject = @{}; $IntermediateObject.Add("ProgramFiles", $FoundPatterns)
+			$TrackedFiles.Add("ProgramFilesCounts", $IntermediateObject)
+		} else { $TrackedFiles.Add("ProgramFilesCounts", @{}) }
 		
 		# Are there any custom directories? If so, iterate the object.
 		if($TrackedFilenameLocationsCustom.Keys.Count -gt 0) {
@@ -832,21 +857,42 @@ foreach($client in $clientAddresses) {
 				} -ArgumentList $TrackedFilenameLocationsCustom.$customlocation,$customlocation
 				$PerLocationCount = @{}
 				foreach($pattern in $TrackedFilenamePatterns.Keys) {
+					# if the contents returned = null, just get out.
 					if($CustomDirContents -eq $null) { continue }
+					# Get files matching the current pattern.
 					$matchedfiles = ($CustomDirContents | Where-Object -Property Name -Match $pattern)
+					# Get the full name (with the path prepended).
 					$actualnames = ($matchedfiles | Select-Object FullName -Last $TrackedFilenameViewLimit).FullName
+					# Count the amount of full pathnames/filenames present.
 					$filecount = $actualnames.Count
+					# If for whatever reason the "Count" property returns a null, default to 0.
 					if($filecount -eq $null) { $filecount = 0 }
+					# Add the pieces to the per-location object (indexing everything for the CURRENT custom location).
 					$PerLocationCount.Add($pattern, $filecount)
 					$PerLocationCount.Add("FILES_$($pattern)", $actualnames)
 				}
+				# Add the per-location object onto the main tracker.
 				$CustomDirTrackers.Add($customlocation, $PerLocationCount)
 			}
+			# Add the main tracker for custom directories to the meta/super object.
 			$TrackedFiles.Add("CustomLocationsCounts", $CustomDirTrackers)
 		} else { $TrackedFiles.Add("CustomLocationsCounts", @{}) }
 		
-		# Add the meta/super object to the report.
+		# Add the meta/super object to the report, and also index the extensions/expressions used.
 		$FullReport.Add("FilenameTrackers", $TrackedFiles)
+		$TrackedFilenamePatternsAsArray = @(); $TrackedFilenamePatterns.Keys `
+			| ForEach-Object { $TrackedFilenamePatternsAsArray += $_ }
+		$FullReport.Add("FilenameTrackersPatterns", $TrackedFilenamePatternsAsArray)
+		<# FullReport is adding this structure:
+		 # "FilenameTrackers" : {
+		 #    UserProfilesCounts    : {  <user1>:{patterns-found}, <user2>:{patterns-found}, ..., <userN>:{patterns-found}  }
+		 #    CustomLocationsCounts : {  <loc1>:{patterns-found}, <loc2>:{patterns-found}, ..., <locN>:{patterns-found}  }
+		 #    ProgramFilesCounts    : {  "ProgramFiles":{patterns-found}  }
+		 #    SystemFilesCounts     : {  "SystemFiles":{patterns-found}  }
+		 # }
+		 #    ... where "patterns-found" uses the pattern from the $TrackedFilenamePatterns variable as the key
+		 #        and the count as the value. There is also a "FILES_[pattern]" key for the actual full filenames found.
+		 #>
 	}
 	
 	
@@ -1021,9 +1067,54 @@ foreach($client in $clientAddresses) {
 		Write-Host "** Client does not have a prior report to provide a comparison to the new report. Skipping comparisons..."
 		continue
 	}
-	# HashTable -> JSON -> HashTable, so that it matches the conversion that the $MostRecentReport variable went through.
+	# HashTable -> JSON -> PSCustomObject, so that it matches the import that the $MostRecentReport variable went through.
 	$FullReportIntermediate = $FullReport | ConvertTo-Json -Depth 3
 	$TodaysReport = $FullReportIntermediate | ConvertFrom-Json
+	
+	
+	# -----------------------------------------
+	# Filename Tracking.
+	if($FilenameTracking -eq $True) {
+		$todayfilenames = $TodaysReport.FilenameTrackers  # Make the code a bit more readable/manageable.
+		$priorfilenames = $MostRecentReport.FilenameTrackers
+		# Structure of these nested loops:
+		#    $category = "outer" nest (like "SystemFilesCounts")
+		#    $subcategory = per-user/per-location information (like "C:\Users\TestAccount")
+		#    $pattern = the pattern or FILES_ key in the actual table.
+		$categoryDeltas = @{}
+		foreach($category in ($todayfilenames | Get-Member -Type NoteProperty).Name) {
+			$subcategoryDeltas = @{}
+			foreach($subcategory in ($todayfilenames.$category | Get-Member -Type NoteProperty).Name) {
+				$perpatternDeltas = @{}
+				foreach($pattern in $TodaysReport.FilenameTrackersPatterns) {
+					# If the previous object is null/empty, this might be a new key, move on as there's no delta to measure.
+					if($priorfilenames.$category.$subcategory.$pattern -eq $null -Or
+						 $priorfilenames.$category.$subcategory.$pattern -eq @{}) { continue }
+					# Get the threshold from the Tweaks section.
+					$itemThreshold = $TrackedFilenamePatterns.$pattern
+					# If it's set to 
+					if($itemThreshold -le 0) { $itemThreshold = 99999 }
+					$filenameCountDelta = ($todayfilenames.$category.$subcategory.$pattern `
+						- $priorfilenames.$category.$subcategory.$pattern)
+					Write-Host "THRESHOLD: $itemThreshold --- DELTAS: $filenameCountDelta"
+					if($filenameCountDelta -ge $itemThreshold) {
+						# The threshold was passed, so add the new count and the previous counts the the changed object.
+						$perpatternDeltas.Add($pattern, $todayfilenames.$category.$subcategory.$pattern)
+						$perpatternDeltas.Add("$($pattern)_prior", $priorfilenames.$category.$subcategory.$pattern)
+					}
+				}
+				# Anything added to the per-pattern keys based on a passed threshold? If so, add the subcat to its object.
+				if($perpatternDeltas.Keys.Count -gt 0) {
+					$subcategoryDeltas.Add($subcategory, $perpatternDeltas)
+				}
+			}
+			# Anything present in the subcategory items? If so, add the category to its object.
+			if($subcategoryDeltas.Keys.Count -gt 0) { $categoryDeltas.Add($category, $subcategoryDeltas) }
+		}
+		# And now that the FOR loops are complete, take a look at categoryDeltas. If the key count is >0 there are changes.
+		if($categoryDeltas.Keys.Count -gt 0) { $deltasObject.FilenameViolations = $categoryDeltas }
+	}
+	
 	
 	# -----------------------------------------
 	# Compare Services.
@@ -1326,7 +1417,7 @@ if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 # Generate a text file to track differences. This is optional based on whether the parameter to do so is given.
 if($DeltasReport -eq $True -And $deltas.Count -gt 0) {
 	$currentTime = (Get-Date -UFormat %Y-%m-%d-%H_%M).toString()
-	Write-Output $deltas | ConvertTo-Json -Depth 3 | Out-File "$ReportsDirectory\DELTAS-$currentTime.txt"
+	Write-Output $deltas | ConvertTo-Json -Depth 6 | Out-File "$ReportsDirectory\DELTAS-$currentTime.txt"
 } elseif($deltas.Count -eq 0) {
 	Write-Host "`n`n`nNo changes were detected across the targeted clients." -ForegroundColor Yellow
 }
