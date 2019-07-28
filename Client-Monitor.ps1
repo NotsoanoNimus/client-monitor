@@ -208,7 +208,7 @@ $NotificationsFilters = @{
 # Enable/Disable filename tracking on the system. This allows for greater control over environment monitoring.
 $FilenameTracking = $True
 # How many files to show in the "most recent" view in the notification/report.
-$TrackedFilenameViewLimit = 10
+$TrackedFilenameViewLimit = 4
 # Define which places on the target machine's disk should be checked. Predefined values should be self-explanatory.
 $TrackedFilenameLocations = @{
 	UserProfiles = $True  # Uses all directories in the Users folder, typically "C:\Users", and iterates on a per-uses basis.
@@ -579,6 +579,8 @@ Function Add-To-Report() {
 # Interpret compounding flags using a logical AND. Used for report generation.
 Function Interpret-Flags() {
 	param( [PSCustomObject]$FlagSet = @{}, $GivenValue, [switch]$Binary )
+	# If GivenValue is null, avoid any kind of NPE and just return null.
+	if($GivenValue -eq $null) { return $null }
 	# If the passed argument for "GivenValue" isn't numeric, then leave with "GivenValue" as the return.
 	if($GivenValue.GetType().Name -ne "Int32") { return $GivenValue }
 	# If the Binary switch is NOT used, just return the single value from the FLAGSET variable.
@@ -830,6 +832,7 @@ foreach($client in $clientAddresses) {
 				Get-ChildItem -Path $ENV:ProgramData -Recurse
 			}
 			$FoundPatterns = @{}
+			# See below section (custom directories) is commented and effectively doing the same thing.
 			foreach($pattern in $TrackedFilenamePatterns.Keys) {
 				if($ProgramDataContents -eq $null) { continue }
 				$matchedfiles = ($ProgramDataContents | Where-Object -Property Name -Match $pattern)
@@ -1092,15 +1095,17 @@ foreach($client in $clientAddresses) {
 						 $priorfilenames.$category.$subcategory.$pattern -eq @{}) { continue }
 					# Get the threshold from the Tweaks section.
 					$itemThreshold = $TrackedFilenamePatterns.$pattern
-					# If it's set to 
-					if($itemThreshold -le 0) { $itemThreshold = 99999 }
+					# If it's set to 0 (or less) or isn't an integer, set it to a very high value (effectively neutering it).
+					if($itemThreshold -le 0 -Or $itemThreshold -IsNot 'Int32') { $itemThreshold = 99999 }
+					# Get the difference between the amount of files matching the given pattern between reports.
 					$filenameCountDelta = ($todayfilenames.$category.$subcategory.$pattern `
 						- $priorfilenames.$category.$subcategory.$pattern)
-					Write-Host "THRESHOLD: $itemThreshold --- DELTAS: $filenameCountDelta"
 					if($filenameCountDelta -ge $itemThreshold) {
 						# The threshold was passed, so add the new count and the previous counts the the changed object.
+						#    Also, add the filenames and the threshold value.
 						$perpatternDeltas.Add($pattern, $todayfilenames.$category.$subcategory.$pattern)
-						$perpatternDeltas.Add("$($pattern)_prior", $priorfilenames.$category.$subcategory.$pattern)
+						$perpatternDeltas.Add("Files_$($pattern)", $todayfilenames.$category.$subcategory."Files_$($pattern)")
+						$perpatternDeltas.Add("Threshold_$($pattern)", $itemThreshold)
 					}
 				}
 				# Anything added to the per-pattern keys based on a passed threshold? If so, add the subcat to its object.
@@ -1113,7 +1118,7 @@ foreach($client in $clientAddresses) {
 		}
 		# And now that the FOR loops are complete, take a look at categoryDeltas. If the key count is >0 there are changes.
 		if($categoryDeltas.Keys.Count -gt 0) { $deltasObject.FilenameViolations = $categoryDeltas }
-	}
+	} else { $deltasObject.FilenameViolations = @{} }
 	
 	
 	# -----------------------------------------
@@ -1173,7 +1178,7 @@ foreach($client in $clientAddresses) {
 	# Compare the AMOUNT of keys in each item within the deltasObject against its blank "dummy" variable.
 	# If the amount of keys differs in any way that means some changes were added and the deltas must be noted.
 	#  NOTE: Don't want to compare "OnlineStatusChange" and "InvokableChange" since these aren't object containers.
-	$deltasOnDeltasOnDeltas = $deltasObjectDummy.Keys | Foreach-Object {
+	$deltasOnDeltasOnDeltas = $deltasObjectDummy.Keys | ForEach-Object {
 		if($_ -eq "OnlineStatusChange" -Or $_ -eq "InvokableChange") { $True }
 		else { $deltasObjectDummy[$_].Count -eq $deltasObject[$_].Count }
 	}
@@ -1245,7 +1250,53 @@ if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 			continue
 		}
 		
-		# Now that the reachability flags are reviewed, the rest should be easy variable-matching and iterating keys.
+		
+		# -----------------------------------------
+		# FILENAME PATTERNS
+		if($FilenameTracking -eq $True -And $clientDeltas.FilenameViolations.Count -gt 0) {
+			$violations = $clientDeltas.FilenameViolations
+			$allTables = ""
+			# Structure of these nested loops:
+			#    $category = "outer" nest (like "SystemFilesCounts")
+			#    $subcategory = per-user/per-location information (like "C:\Users\TestAccount")
+			#    $pattern = the pattern or FILES_ key in the actual table.
+			foreach($category in $violations.Keys) {
+				foreach($subcategory in $violations.$category.Keys) {
+					# Set up a variable to patchwerk into the final value to add to the notification.
+					$addToReport = $violations.$category.$subcategory
+					# Automatically set the "subcategory" field as the Location member.
+					$addToReport | Add-Member -Name Location -Value $subcategory -Type NoteProperty
+					# For each tracked pattern, check the keys in the object against them (improve later) and clean from there.
+					#    This helps to easily generate some tables that correspond dynamically to each entered/tracked pattern.
+					foreach($item in $TrackedFilenamePatterns.Keys) {
+						$selectedFields = @()
+						$violations.$category.$subcategory.Keys | ForEach-Object { if($_ -Like "*$($item)*") { $selectedFields += $_ } }
+						$selectedFields += "Location"
+						# If "selectedFields" contains more than just "Location" a table should be generated.
+						if($selectedFields.Count -gt 1) {
+							$intermediateTable = (($addToReport | ConvertTo-Json | ConvertFrom-Json) | Select-Object $selectedFields `
+								| ConvertTo-Html -Fragment)
+							# Cheaply and hackily replace some of the table-header field names after the fact.
+							$intermediateTable = $intermediateTable -Replace ">Files_$([Regex]::Escape($item))</th", ">Most Recent Files</th"
+							$intermediateTable = $intermediateTable -Replace ">Threshold_$([Regex]::Escape($item))</th", ">Threshold to Pass</th"
+							$intermediateTable = $intermediateTable -Replace ">$([Regex]::Escape($item))</th", ">Occurrences</th"
+							# Add it to the tables string and thusly onto the body pipeline.
+							$allTables += "<b>Pattern</b>: $($item)<br />`n" + $intermediateTable + "<br />`n"
+						}
+					}
+				}
+			}
+			# Convert the collection of objects into a custom object, select the needed fields, and output a clean HTML table.
+			$fillvar = $allTables #(@($outputArray) | ConvertTo-Json | ConvertFrom-Json) | Select-Object $preservedProperties | ConvertTo-Html -Fragment
+			# Add the collected information to the report.
+			$NOTIFBODY_Rpt += "<span class='SectionHeader'>Filename Trackers</span><br />`n"
+			$NOTIFBODY_Rpt += "<div class='DiffsSection'>`n"
+			$NOTIFBODY_Rpt += "$($fillvar)<br />`n"
+			$NOTIFBODY_Rpt += "</div>`n"
+		}
+		
+		
+		# Now that the reachability flags & filenames are reviewed, the rest should be easy variable-matching and iterating keys.
 		#    Use a modularized function to add to the report body if the given category/section is enabled with the triggers.
 		
 		# -----------------------------------------

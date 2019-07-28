@@ -157,3 +157,4 @@ A couple things to note with notifications like this:
 ## TODOs
 - ~~If filters are engaged and _NOTHING_ is in the report except a few blank sections (because things were filtered out), appropriately send the "No Changes" email to indicate that no **tracked changes** were discovered.~~
 - ~~Make compared & selected fields from each category (StoreApps, Services, etc) dynamic using a single tweak. Basically allow a single tweak to define which fields are discovered and compared among the categories.~~
+- Add some form of SMTP relay using authentication, perhaps with `Get-Credential`. Haven't looked into this too much yet.
