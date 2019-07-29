@@ -110,9 +110,9 @@ Each tweak will include its own description (if its variable name isn't descript
   + **$NotificationsBodyOnNoChange** -- Body template for notifications informing of no changes.
 + **$NotificationsAsHTML** -- Whether or not to send emails with HTML formatting. If set to `$False` email notifications will be sent in plaintext.
   + The "class" tweaks in this section are really not important unless the name is clashing with another CSS class you write or use in the notifications.
-+ **$NotificationsHTMLWrapper** -- The HTML notification wrapper format, including all content between the `<HTML>` tags. The `[[BODYTEXT]]` item here is later replaced with the generated body of the notification.
+  + **$NotificationsHTMLWrapper** -- The HTML notification wrapper format, including all content between the `<HTML>` tags. The `[[BODYTEXT]]` item here is later replaced with the generated body of the notification.
 + **$NotificationsChangesBodyHeader** -- The header/upper section used in notifications that _will_ have some changes noted for clients.
-  + The actual Body text is appended to this value _later_, forming the `[[BODYTEXT]]` piece to fit inside the **HTML wrapper tweak**.
+  + The actual Body text is appended to this value _later_, forming the `[[BODYTEXT]]` piece to either `(a)` fit inside the **HTML wrapper tweak**, or `(b)` be inserted as plaintext into the notification.
 + **$NotificationsTriggers** -- Turn on/off delta detections for the listed sections or items. If set to `$False`, the notification will not include change information about the given section.
   + _ReachabilityChange_ : Notify when the reachability of the target host changed (both a ping test and `Invoke-Command` test for WinRM).
   + _InstalledAppsChange_ : Notify when installed applications change.
@@ -134,7 +134,7 @@ Each tweak will include its own description (if its variable name isn't descript
     + _SystemFiles_ : **NOT RECOMMENDED!** Uses `%SYSTEMROOT%`, i.e. `C:\Windows` in most cases, and iterating this directory recursively can take a very long time. You would be better suited to defining either non-recursive or more specific directories in the "custom" variable below.
     + _ProgramData_ : **NOT RECOMMENDED!** Uses `%ProgramData%`, i.e. `C:\ProgramData` in most cases. See above for how to use in a more appropriate way.
   + **$TrackedFilenameLocationsCustom** -- Custom directories to check for certain filename patterns. Key/Value pairs are `[DIRECTORY] = [RECURSE?]` respectively.
-    +  So setting `'C:\Windows' = $True` in the object would order the script to _RECURSIVELY_ check `C:\Windows` for the filename patterns given. Not recommended to do a recursive search in most cases, but just an example.
+    +  _Example_: setting `'C:\Windows' = $True` in the object would order the script to _RECURSIVELY_ check `C:\Windows` for the filename patterns given. Not recommended to do a recursive search in most cases, but just an example.
   + **$TrackedFilenamePatterns** -- The filename patterns (_regex_) to track across all of the above directories, and the associated "threshold". Note that these regexes allow you full control and are _NOT_ restricted to just filename extension.
     + Keypair/Hashtable format: `'[REGEX]' = [THRESHOLD]`
     + Take care with this, as entering `.exe` for example will pick up the filename `processexecute.txt` because the regex isn't specifying the `^` or `$` characters (`line-start` and `line-end` respectively) and isn't escaping the `.` (wildcard) character. Thus, the substring `sexe` matches the pattern in this case.
