@@ -610,33 +610,6 @@ Function Add-To-Report() {
 }
 
 
-# Interpret compounding flags using a logical AND. Used for report generation.
-Function Interpret-Flags() {
-	param( [PSCustomObject]$FlagSet = @{}, $GivenValue, [switch]$Binary )
-	# If GivenValue is null, avoid any kind of NPE and just return null.
-	if($GivenValue -eq $null) { return $null }
-	# If the passed argument for "GivenValue" isn't numeric, then leave with "GivenValue" as the return.
-	if($GivenValue.GetType().Name -ne "Int32") { return $GivenValue }
-	# If the Binary switch is NOT used, just return the single value from the FLAGSET variable.
-	if($Binary -ne $True) { return $FlagSet["code$($GivenValue)"] }
-	# Can't do a bitwise AND against a 0, so just automatically default to the flagset's 0 code.
-	if($GivenValue -eq 0) { return $FlagSet["code0"] }
-	# Initialize the return variable.
-	$flagsInfo = ""
-	# For each "codeXX" key, strip off the "code" prefix and do a logical AND against the integer to see if that bit is set.
-	#    If the bit is set, append the corresponding "codeXX" value from the object onto the return string.
-	$FlagSet.Keys | ForEach-Object {
-		# Strip the "code" piece from the key.
-		$code = $_ -Replace "code"
-		# Do a bitwise AND on the givenvalue and the code from the key ID.
-		$isMatch = $GivenValue -BAND $code
-		# If it matches (ergo the flag is set), append the piece/verb from the flagset onto the return variable.
-		if($isMatch -ne 0) { $flagsInfo += $FlagSet["code$($code)"] + " " }
-	}
-	return $flagsInfo
-}
-
-
 
 ##################################################
 #                      MAIN                      #
