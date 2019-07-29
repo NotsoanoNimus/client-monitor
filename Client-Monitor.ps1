@@ -36,7 +36,6 @@ param(
  	[switch]$DeltasReport = $False,
  	[switch]$NoNotifications = $False,
  	[string]$BCC = "",
- 	[switch]$NoMini = $False
  	[switch]$NoMini = $False,
  	[PSCredential]$SmtpCredential = $null
 )
@@ -144,7 +143,7 @@ $NotificationsChangesBodyHeader += "and anything in <span class='$NotificationsH
  #>
 $TrackedValues = @{
 	InstalledApps = @("DisplayName", "DisplayVersion", "Publisher", "InstallDate", "InstallLocation")
-	Services = @("DisplayName", "ServiceName", "ServiceType", "StartType", "Status")
+	Services = @("DisplayName", "ServiceName", "StartType") #"ServiceType", "Status",
 	StoreApps = @("Name", "Architecture", "InstallLocation", "Status", "PublisherId", "PackageFullName")
 	StartupApps = @("Command", "Location", "User")
 	ScheduledTasks = @("TaskName", "TaskPath", "Author", "SecurityDescriptor")
@@ -168,12 +167,12 @@ $NotificationsTriggers = @{
 #    Conversely, if set to False (acting as a whitelist) then only the given values/patterns will be allowed.
 $NotificationsFiltersBlacklist = $True
 # Whether or not to show the text of the below tweak in the generated notification, when an item is filtered out. Default off.
-$NotificationsShowFilteredItem = $False
+$NotificationsShowFilteredItem = $True
 # Set the mode for filtering to regex. This will cause the strings entered below to be run against the -Match operator
 #    rather than the -Like operator. Do not change this setting unless you'd like to use regex filtering instead.
 $NotificationFiltersRegex = $False
 # A string (HTML formatting optional) to insert when an item is filtered from a notification, if the above value is $True.
-$NotificationsFilteredIndicator =  "<div class='DiffsSection'><b>[FilteredItem]</b><br /><br /></div>`n"
+$NotificationsFilteredIndicator = "<b>Filtered Items</b>"
 <# Define strings (wildcards supported) which should be white/black-listed for allowance into notifications.
  #    The strings are ARRAYS of patterns. For example: @("win*","*micro*") will filter anything starting with "win" and
  #    anything containing the substring "micro".
@@ -488,12 +487,13 @@ Function Add-To-Report() {
 	if($NewObject.Keys.Count -gt 0) {
 		$NOTIFSXN_New = "<span class='SectionHeader'>New $ItemName</span><br />`n"
 		$SomethingUnfiltered = $False   # Used to indicate if something NOT filtered was present.
+		$filteredCount = 0  # Used to indicate how many items were filtered from the notification.
 		foreach($new in $NewObject.Keys) {
 			# For each key in the new item, check the value of the field against the values in the notification filters.
 			$isFiltered = Check-Notification-Filter -FilterType $ItemType -FilterAge "New" -ItemValue $NewObject.$new
 			# If the isFiltered is True, one of the filters matched so skip adding the item to the email.
 			if($isFiltered -eq $True) {
-				if($NotificationsShowFilteredItem -eq $True) { $NOTIFSXN_New += $NotificationsFilteredIndicator }
+				if($NotificationsShowFilteredItem -eq $True) { $filteredCount++ }
 				continue
 			}
 			$fillVar = $NewObject.$new | ConvertTo-HTML -Fragment
@@ -505,6 +505,10 @@ Function Add-To-Report() {
 			$NOTIFSXN_New += "</div>`n"
 			# If this point is reached then there is something that was NOT filtered.
 			$SomethingUnfiltered = $True
+		}
+		# Count up the amount of filtered objects and add it to the report.
+		if($filteredCount -gt 0) {
+			$NOTIFSXN_New += "<div class='DiffsSection'>$NotificationsFilteredIndicator --- $filteredCount<br /><br /></div>`n"
 		}
 		# If either (a) something unfiltered is present, or (b) filtered items are displayed, add the variable to the main SXN.
 		if(($SomethingUnfiltered -eq $True) -Or ($NotificationsShowFilteredItem -eq $True)) { $NOTIFSXN += $NOTIFSXN_New }
@@ -518,7 +522,7 @@ Function Add-To-Report() {
 			$isFiltered = Check-Notification-Filter -FilterType $ItemType -FilterAge "Removed" -ItemValue $RemovedObject.$removed
 			# If the isFiltered is True, one of the filters matched so skip adding the item to the email.
 			if($isFiltered -eq $True) {
-				if($NotificationsShowFilteredItem -eq $True) { $NOTIFSXN_Removed += $NotificationsFilteredIndicator }
+				if($NotificationsShowFilteredItem -eq $True) { $filteredCount++ }
 				continue
 			}
 			$fillVar = $RemovedObject.$removed | ConvertTo-HTML -Fragment
@@ -531,6 +535,10 @@ Function Add-To-Report() {
 			# If this point is reached then there is something that was NOT filtered.
 			$SomethingUnfiltered = $True
 		}
+		# Count up the amount of filtered objects and add it to the report.
+		if($filteredCount -gt 0) {
+			$NOTIFSXN_New += "<div class='DiffsSection'>$NotificationsFilteredIndicator --- $filteredCount<br /><br /></div>`n"
+		}
 		# If either (a) something unfiltered is present, or (b) filtered items are displayed, add the variable to the main SXN.
 		if(($SomethingUnfiltered -eq $True) -Or ($NotificationsShowFilteredItem -eq $True)) { $NOTIFSXN += $NOTIFSXN_Removed }
 	}
@@ -538,13 +546,14 @@ Function Add-To-Report() {
 	if($ChangedObject.Keys.Count -gt 0) {
 		$NOTIFSXN_Changed = "<span class='SectionHeader'>Changed $ItemName</span><br />`n"
 		$SomethingUnfiltered = $False   # Used to indicate if something NOT filtered was present.
+		$filteredCount = 0  # Used to indicate how many items were filtered from the notification.
 		foreach($changed in $ChangedObject.Keys) {
 			# ------------- CHECK BOTH OBJECTS WITH FILTERS ---------------
 			# For each key in the changed item, check the value of the field against the values in the notification filters.
 			$isFiltered = Check-Notification-Filter -FilterType $ItemType -FilterAge "Changed" -ItemValue $ChangedObject.$changed
 			# If the isFiltered is True, one of the filters matched so skip adding the item to the email.
 			if($isFiltered -eq $True) {
-				if($NotificationsShowFilteredItem -eq $True) { $NOTIFSXN_Changed += $NotificationsFilteredIndicator }
+				if($NotificationsShowFilteredItem -eq $True) { $filteredCount++ }
 				continue
 			}
 			# --------------------------------------------------------------
@@ -586,6 +595,10 @@ Function Add-To-Report() {
 			$NOTIFSXN_Changed += "</div>`n"
 			# If this point is reached then there is something that was NOT filtered.
 			$SomethingUnfiltered = $True
+		}
+		# Count up the amount of filtered objects and add it to the report.
+		if($filteredCount -gt 0) {
+			$NOTIFSXN_New += "<div class='DiffsSection'>$NotificationsFilteredIndicator --- $filteredCount<br /><br /></div>`n"
 		}
 		# If either (a) something unfiltered is present, or (b) filtered items are displayed, add the variable to the main SXN.
 		if(($SomethingUnfiltered -eq $True) -Or ($NotificationsShowFilteredItem -eq $True)) { $NOTIFSXN += $NOTIFSXN_Changed }
@@ -963,7 +976,7 @@ foreach($client in $clientAddresses) {
 	if($storeAppsList.Count -eq 0) {
 		Write-Host "~~~~ Store apps couldn't be captured for this client. Please verify administrative permissions."
 	}; $ErrorActionPreference = $priorELVL
-	$reportStoreApps = @{}
+	$reportStoreApps = @{}; $storeAppsIndex = @()
 	# Iterate the list of store apps.
 	foreach($app in $storeAppsList) {
 		$keyname = "$($app.InstallLocation)_$($app.PackageFullName)"
@@ -984,12 +997,6 @@ foreach($client in $clientAddresses) {
 		# Add the PackageUserInformation property (with extracted names/statuses) into the final object.
 		$storeAppsInfo | Add-Member -Name PackageUserInformation -Type NoteProperty -Value "$($perUserAppStatus)"
 		$reportStoreApps.Add($keyname, $storeAppsInfo)
-	}
-	# Get an index of store apps based on the InstallLocation.
-	$storeAppsIndex = [System.Collections.ArrayList]@()
-	$storeAppsList | ForEach-Object {
-		$keyname = "$($_.InstallLocation)"
-		for($i = 0; $i -lt 4; $i++) { if($storeAppsIndex.Contains($keyname)) { $keyname += "_" } }
 		$storeAppsIndex += $keyname
 	}
 	# Add it to the report.
@@ -1306,7 +1313,7 @@ if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 				}
 			}
 			# Convert the collection of objects into a custom object, select the needed fields, and output a clean HTML table.
-			$fillvar = $allTables #(@($outputArray) | ConvertTo-Json | ConvertFrom-Json) | Select-Object $preservedProperties | ConvertTo-Html -Fragment
+			$fillvar = $allTables
 			# Add the collected information to the report.
 			$NOTIFBODY_Rpt += "<span class='SectionHeader'>Filename Trackers</span><br />`n"
 			$NOTIFBODY_Rpt += "<div class='DiffsSection'>`n"
@@ -1317,7 +1324,6 @@ if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 		
 		# Now that the reachability flags & filenames are reviewed, the rest should be easy variable-matching and iterating keys.
 		#    Use a modularized function to add to the report body if the given category/section is enabled with the triggers.
-		
 		# -----------------------------------------
 		# INSTALLED APPLICATIONS
 		if($NotificationsTriggers.InstalledAppsChange -eq $True) {
@@ -1327,104 +1333,24 @@ if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 				-ChangedObject $clientDeltas.ChangedInstalledApps -ItemName "Installed Applications" `
 				-ItemType "InstalledApps"
 		}
-	
 		# -----------------------------------------
 		# SERVICES
-		$STATUS_CODES = @{
-			code1="Stopped"; code2="Start-Pending"; code3="Stop-Pending"
-			code4="Running"; code5="Continue"; code6="Pause-Pending"; code7="Paused"
-			code=""
-		}
-		$START_TYPES = @{ code0="Boot"; code1="System"; code2="Automatic"; code3="Manual"; code4="Disabled"; code="" }
-		$SERVICE_TYPES = @{
-			code1="Kernel-Driver"; code2="FS-Driver"; code4="HW-Driver"
-			code8="FS-Startup-Driver"; code16="Normal"; code32="Shared"; code256="Interactive"
-			code=""
-		}
 		if($NotificationsTriggers.ServicesChange -eq $True) {
-			# Change numeric codes to their equivalent values IF the value in each item is numeric.
-			#    This usually only happens when scanning localhost, but others using the script may encounter them.
-			$clientDeltas.ChangedServices.Keys | ForEach-Object {
-				$clientDeltas.ChangedServices.$_.Status = (Interpret-Flags -FlagSet $STATUS_CODES `
-					-GivenValue $clientDeltas.ChangedServices.$_.Status).TrimEnd()
-				$clientDeltas.ChangedServices.$_.StartType = (Interpret-Flags -FlagSet $START_TYPES `
-					-GivenValue $clientDeltas.ChangedServices.$_.StartType).TrimEnd()
-				$clientDeltas.ChangedServices.$_.ServiceType = (Interpret-Flags -FlagSet $SERVICE_TYPES `
-					-GivenValue $clientDeltas.ChangedServices.$_.ServiceType -Binary).TrimEnd()
-				# Begin priors.
-				$clientDeltas.ChangedServices.$_.Status_prior = (Interpret-Flags -FlagSet $STATUS_CODES `
-					-GivenValue $clientDeltas.ChangedServices.$_.Status_prior).TrimEnd()
-				$clientDeltas.ChangedServices.$_.StartType_prior = (Interpret-Flags -FlagSet $START_TYPES `
-					-GivenValue $clientDeltas.ChangedServices.$_.StartType_prior).TrimEnd()
-				$clientDeltas.ChangedServices.$_.ServiceType_prior = (Interpret-Flags -FlagSet $SERVICE_TYPES `
-					-GivenValue $clientDeltas.ChangedServices.$_.ServiceType_prior -Binary).TrimEnd()
-			}
-			$clientDeltas.RemovedServices.Keys | ForEach-Object {
-				$clientDeltas.RemovedServices.$_.Status = (Interpret-Flags -FlagSet $STATUS_CODES `
-					-GivenValue $clientDeltas.RemovedServices.$_.Status).TrimEnd()
-				$clientDeltas.RemovedServices.$_.StartType = (Interpret-Flags -FlagSet $START_TYPES `
-					-GivenValue $clientDeltas.RemovedServices.$_.StartType).TrimEnd()
-				$clientDeltas.RemovedServices.$_.ServiceType = (Interpret-Flags -FlagSet $SERVICE_TYPES `
-					-GivenValue $clientDeltas.RemovedServices.$_.ServiceType -Binary).TrimEnd()
-			}
-			$clientDeltas.NewServices.Keys | ForEach-Object {
-				$clientDeltas.NewServices.$_.Status = (Interpret-Flags -FlagSet $STATUS_CODES `
-					-GivenValue $clientDeltas.NewServices.$_.Status).TrimEnd()
-				$clientDeltas.NewServices.$_.StartType = (Interpret-Flags -FlagSet $START_TYPES `
-					-GivenValue $clientDeltas.NewServices.$_.StartType).TrimEnd()
-				$clientDeltas.NewServices.$_.ServiceType = (Interpret-Flags -FlagSet $SERVICE_TYPES `
-					-GivenValue $clientDeltas.NewServices.$_.ServiceType -Binary).TrimEnd()
-			}
 			# Add the gathered information to the report.
 			$NOTIFBODY_Rpt += Add-To-Report `
 				-NewObject $clientDeltas.NewServices -RemovedObject $clientDeltas.RemovedServices `
 				-ChangedObject $clientDeltas.ChangedServices -ItemName "Services" `
 				-ItemType "Services"
 		}
-		
 		# -----------------------------------------
 		# STORE APPS
-		$SA_STATUS_CODES = @{
-			code0="Ok"; code1="License-Issue"; code2="Modified"; code4="Tampered"
-			code8="Disabled"; code16="Package-Offline"; code32="Deployment"
-			code64="Dependency-Issue"; code128="Data-Offline"; code256="Partially-Staged"
-			code512="Not-Available"; code1024="Servicing"; code2048="Needs-Remediation"
-			code=""
-		}
-		$ARCHITECTURE_CODES = @{ code0="X86"; code5="ARM"; code9="X64"; code11="Neutral"; code65535="Unknown"; code="" }
 		if($NotificationsTriggers.StoreAppsChange -eq $True) {
-			# Change numeric codes to their equivalent values IF the value in each item is numeric.
-			#    This usually only happens when scanning localhost, but others using the script may encounter them.
-			$clientDeltas.ChangedStoreApps.Keys | ForEach-Object {
-				$clientDeltas.ChangedStoreApps.$_.Status = (Interpret-Flags -FlagSet $SA_STATUS_CODES `
-					-GivenValue $clientDeltas.ChangedStoreApps.$_.Status -Binary).TrimEnd()
-				$clientDeltas.ChangedStoreApps.$_.Architecture = (Interpret-Flags -FlagSet $ARCHITECTURE_CODES `
-					-GivenValue $clientDeltas.ChangedStoreApps.$_.Architecture).TrimEnd()
-				# Begin priors.
-				$clientDeltas.ChangedStoreApps.$_.Status_prior = (Interpret-Flags -FlagSet $SA_STATUS_CODES `
-					-GivenValue $clientDeltas.ChangedStoreApps.$_.Status_prior -Binary).TrimEnd()
-				$clientDeltas.ChangedStoreApps.$_.Architecture_prior = (Interpret-Flags -FlagSet $ARCHITECTURE_CODES `
-					-GivenValue $clientDeltas.ChangedStoreApps.$_.Architecture_prior).TrimEnd()
-			}
-			$clientDeltas.RemovedStoreApps.Keys | ForEach-Object {
-				$clientDeltas.RemovedStoreApps.$_.Status = (Interpret-Flags -FlagSet $SA_STATUS_CODES `
-					-GivenValue $clientDeltas.RemovedStoreApps.$_.Status -Binary).TrimEnd()
-				$clientDeltas.RemovedStoreApps.$_.Architecture = (Interpret-Flags -FlagSet $ARCHITECTURE_CODES `
-					-GivenValue $clientDeltas.RemovedStoreApps.$_.Architecture).TrimEnd()
-			}
-			$clientDeltas.NewStoreApps.Keys | ForEach-Object {
-				$clientDeltas.NewStoreApps.$_.Status = (Interpret-Flags -FlagSet $SA_STATUS_CODES `
-					-GivenValue $clientDeltas.NewStoreApps.$_.Status -Binary).TrimEnd()
-				$clientDeltas.NewStoreApps.$_.Architecture = (Interpret-Flags -FlagSet $ARCHITECTURE_CODES `
-					-GivenValue $clientDeltas.NewStoreApps.$_.Architecture).TrimEnd()
-			}
 			# Add the gathered information to the report.
 			$NOTIFBODY_Rpt += Add-To-Report `
 				-NewObject $clientDeltas.NewStoreApps -RemovedObject $clientDeltas.RemovedStoreApps `
 				-ChangedObject $clientDeltas.ChangedStoreApps -ItemName "Store Apps" `
 				-ItemType "StoreApps"
 		}
-		
 		# -----------------------------------------
 		# STARTUP APPS
 		if($NotificationsTriggers.StartupAppsChange -eq $True) {
@@ -1434,7 +1360,6 @@ if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 				-ChangedObject $clientDeltas.ChangedStartupApps -ItemName "Startup Apps" `
 				-ItemType "StartupApps"
 		}
-		
 		# -----------------------------------------
 		# SCHEDULED TASKS APPS
 		if($NotificationsTriggers.ScheduledTasksChange -eq $True) {
@@ -1445,9 +1370,10 @@ if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 				-ItemType "ScheduledTasks"
 		}
 		
-		# ---------- BUILD THE ENTIRE SECTION -----------
+		# ##############################################
+		# ########## BUILD THE ENTIRE SECTION ##########
 		if($NOTIFBODY_Rpt -ne "") {
-			# Inject the hostname of the client into the email digest.
+			# Inject the hostname of the client into the email digest, followed by the Rpt subsection that's been constructed.
 			$NOTIFBODY_Wrapper += "`n`n<hr /><h2>$client</h2>`n"
 			$NOTIFBODY_Wrapper += $NOTIFBODY_Rpt
 		}
@@ -1456,19 +1382,24 @@ if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 	# If the notification body is still null, inject the No Client Changes message.
 	#    Otherwise, build the full report.
 	if($NOTIFBODY_Wrapper.Trim() -eq "" -And $NotificationOnNoChange -eq $True) { $NOTIFBODY += $NotificationsBodyOnNoChange }
-	elseif($NOTIFBODY_Wrapper.Trim() -eq "" -And $NotificationOnNoChange -eq $False) { $NOTIFBODY += "No changes detected." }
+	elseif($NOTIFBODY_Wrapper.Trim() -eq "" -And $NotificationOnNoChange -eq $False) { $NOTIFBODY += "no-change" }
 	else {
 		# There were changes registered in the wrapper, so add everything to the primary email body.
 		$NOTIFBODY = $NotificationsChangesBodyHeader
 		$NOTIFBODY += $NOTIFBODY_Wrapper
 	}
 	
-	# Send the compiled notification to the target address using the SMTP info provided at the top of the script.
-	$EmailSuccess = Send-Email -RELAYSERVER $NotificationsServer -RELAYPORT $NotificationsServerPort `
-		-FROM $NotificationsSource -TO $NotificationsAddress -SUBJECT $NotificationsSubject -BODY $NOTIFBODY
-	if($EmailSuccess -ne $True) {
-		Write-Host "~~~~ Dispatching email notification to '$NotificationsAddress' (BCC: '$BCC') has failed!"
-	}
+	# If NOTIFBODY isn't equal to "no-change" then send something out. Otherwise be silent.
+	#    This is different because it's not relying on the clientDeltas object to track necessities of notifications.
+	#    Instead it can recognize that there ARE changes/deltas but they've ALL been filtered out, and user doesn't want notif.
+	if($NOTIFBODY -ne "no-change") {
+		# Send the compiled notification to the target address using the SMTP info provided at the top of the script.
+		$EmailSuccess = Send-Email -RELAYSERVER $NotificationsServer -RELAYPORT $NotificationsServerPort `
+			-FROM $NotificationsSource -TO $NotificationsAddress -SUBJECT $NotificationsSubject -BODY $NOTIFBODY
+		if($EmailSuccess -ne $True) {
+			Write-Host "~~~~ Dispatching email notification to '$NotificationsAddress' (BCC: '$BCC') has failed!"
+		}
+	} else { Write-Host "~~~~ Notifications on no-change turned off. There were no changes detected." }
 } elseif($NotificationOnNoChange -eq $True -And $NoNotifications -eq $False) {
 	# Send an email (if enabled) to notify that no changes were detected.
 	$EmailSuccess = Send-Email -RELAYSERVER $NotificationsServer -RELAYPORT $NotificationsServerPort `

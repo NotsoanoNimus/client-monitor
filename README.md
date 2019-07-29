@@ -99,7 +99,7 @@ Each tweak will include its own description (if its variable name isn't descript
   + If the most recent report in the directory is **older** than the `$MaxReportRetentionHours` time, it will actually be _used for comparison before it is deleted_.
 + **$TrackedValues** -- Tracked values across each given category. These values are used in the `Select-Object` method on the queries for each item in the set returned per category, and also in the later **comparisons**. Below are the defaults for each category:
   + _InstalledApps_ : `@("DisplayName", "DisplayVersion", "Publisher", "InstallDate", "InstallLocation")`
-  + _Services_ : `@("DisplayName", "ServiceName", "ServiceType", "StartType", "Status")`
+  + _Services_ : `@("DisplayName", "ServiceName", "StartType")`
   + _StoreApps_ : `@("Name", "Architecture", "InstallLocation", "Status", "PublisherId", "PackageFullName")`
   + _StartupApps_ : `@("Command", "Location", "User")`
   + _ScheduledTasks_ : `@("TaskName", "TaskPath", "Author", "SecurityDescriptor")`
@@ -187,3 +187,4 @@ Keep in mind that regardless of the options you choose to implement as the admin
 - ~~If filters are engaged and _NOTHING_ is in the report except a few blank sections (because things were filtered out), appropriately send the "No Changes" email to indicate that no **tracked changes** were discovered.~~
 - ~~Make compared & selected fields from each category (StoreApps, Services, etc) dynamic using a single tweak. Basically allow a single tweak to define which fields are discovered and compared among the categories.~~
 - ~~Add some form of SMTP relay using authentication, perhaps with `Get-Credential`. Haven't looked into this too much yet.~~
+- _(?)_ Add a way to dynamically change the indexing format used for keying certain values.
