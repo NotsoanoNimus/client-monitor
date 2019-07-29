@@ -71,8 +71,8 @@ The report should only be generated if any changes were detected. This is useful
 ### NoNotifications
 **Optional**. Exactly as it says: a switch to the script that skips sending any kind of email notification.
 
-### BCC {"target@target.net, Notsoano Nimus \<test@testing.com\>"}
-**Optional**. If included, the script will BCC the target address(es) in the generated notifications. The above email addresses are there as an example only.
+### BCC {"email-address(es)"}
+**Optional**. If included, the script will BCC the target address(es) in the generated notifications.
 Take care and precaution that the _relay server_ used in the Tweaks section below will accept relay mail to all target destinations.
 
 ### NoMini
@@ -152,6 +152,21 @@ A couple things to note with notifications like this:
 - This format can be entirely controlled/restyled within the _Tweaks_ section, as mentioned above.
 
 ![Sample Notification from the Monitoring Script](https://raw.githubusercontent.com/NotsoanoNimus/client-monitor/master/docs/Notification_Sample.png)
+
+---
+
+## Examples
+Below are a couple of examples using the `Parameters` explained at the beginning of this document, to achieve certain functions that may be desirable.
+Keep in mind that regardless of the options you choose to implement as the administrator, the script is designed to be run as a **scheduled task**, so the first example might only be very useful for first-time use or for troubleshooting.
+
++ `$deltas = .\Client-Monitor.ps1 -NoNotifications -NoMini -DeltasReport`
+  + Suppresses any email notifications that would ordinarily be generated.
+  + Keeps all generated reports for each client in a readable _JSON_ format (trading disk space for readability).
+  + Generates a Deltas Report in the `$ReportsDirectory` location given to the script.
+  + `$deltas` is set to a return variable from the script, equal to the object output in _JSON_ format in the Deltas Report.
++ `.\Client-Monitor -ClientsList "C:\target-clients.txt" -BCC "target@testing.com, Notsoano Nimus <postmaster@thestraightpath.email>"`
+  + Use the clients list at `C:\target-clients.txt` to target specific IP addresses or hostnames on the network. This text file could also include just `LOCALHOST` if it is desired for the script to monitor **only** the host machine.
+  + Silently send a copy of the notification email to both of the _BCC_ addresses given (notice they're comma-separated).
 
 ---
 
