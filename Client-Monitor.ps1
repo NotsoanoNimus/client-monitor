@@ -539,7 +539,7 @@ Function Add-To-Report() {
 		}
 		# Count up the amount of filtered objects and add it to the report.
 		if($filteredCount -gt 0) {
-			$NOTIFSXN_New += "<div class='DiffsSection'>$NotificationsFilteredIndicator --- $filteredCount<br /><br /></div>`n"
+			$NOTIFSXN_Removed += "<div class='DiffsSection'>$NotificationsFilteredIndicator --- $filteredCount<br /><br /></div>`n"
 		}
 		# If either (a) something unfiltered is present, or (b) filtered items are displayed, add the variable to the main SXN.
 		if(($SomethingUnfiltered -eq $True) -Or ($NotificationsShowFilteredItem -eq $True)) { $NOTIFSXN += $NOTIFSXN_Removed }
@@ -600,7 +600,7 @@ Function Add-To-Report() {
 		}
 		# Count up the amount of filtered objects and add it to the report.
 		if($filteredCount -gt 0) {
-			$NOTIFSXN_New += "<div class='DiffsSection'>$NotificationsFilteredIndicator --- $filteredCount<br /><br /></div>`n"
+			$NOTIFSXN_Changed += "<div class='DiffsSection'>$NotificationsFilteredIndicator --- $filteredCount<br /><br /></div>`n"
 		}
 		# If either (a) something unfiltered is present, or (b) filtered items are displayed, add the variable to the main SXN.
 		if(($SomethingUnfiltered -eq $True) -Or ($NotificationsShowFilteredItem -eq $True)) { $NOTIFSXN += $NOTIFSXN_Changed }
@@ -1282,7 +1282,8 @@ if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 							$intermediateTable = $intermediateTable -Replace ">Threshold_$([Regex]::Escape($item))</th", ">Threshold to Pass</th"
 							$intermediateTable = $intermediateTable -Replace ">$([Regex]::Escape($item))</th", ">Occurrences</th"
 							# Add it to the tables string and thusly onto the body pipeline.
-							$allTables += "<b>Pattern</b>: $($item)<br />`n" + $intermediateTable + "<br />`n"
+							$allTables += "<span style='color:black;font-size:14px;'><b>Pattern</b>: $($item)</span><br />`n" `
+								+ $intermediateTable
 						}
 					}
 				}
