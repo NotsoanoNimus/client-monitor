@@ -3,6 +3,7 @@
 .SYNOPSIS
 Gather, aggregate, and report information from client machines on the domain.
 Intended to be run administratively.
+Project repository and documentation located at: https://github.com/NotsoanoNimus/client-monitor
 .DESCRIPTION
 This script will harvest data from client machines on the network using WinRM,
  then compare the differences from the prior report to the most recent one.
@@ -517,6 +518,7 @@ Function Add-To-Report() {
 	if($RemovedObject.Keys.Count -gt 0) {
 		$NOTIFSXN_Removed = "<span class='SectionHeader'>Removed $ItemName</span><br />`n"
 		$SomethingUnfiltered = $False   # Used to indicate if something NOT filtered was present.
+		$filteredCount = 0  # Used to indicate how many items were filtered from the notification.
 		foreach($removed in $RemovedObject.Keys) {
 			# For each key in the removed item, check the value of the field against the values in the notification filters.
 			$isFiltered = Check-Notification-Filter -FilterType $ItemType -FilterAge "Removed" -ItemValue $RemovedObject.$removed
