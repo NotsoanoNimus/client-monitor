@@ -102,7 +102,7 @@ $NotificationsHTMLWrapper = @"
 <html>
 <head>
 <style>
-	body { word-wrap: break-word; font-size: 12px; }
+	body { word-wrap: break-word; font-size: 14px; }
 	table { width: 100%; overflow-x: auto; }
 	table, th, td { border: 1px solid black; }
 	th, td { text-align: left; padding: 10px; }
@@ -238,9 +238,9 @@ $TrackedFilenameLocationsCustom = @{
 $TrackedFilenamePatterns = @{
 	'\.exe$' = 2
 	'\.bat$' = 2
-	'\.enc(rypt(ed)?)?' = 10
-	'\.txt$' = 5
-	'\.ini$' = 2
+	'\.enc(rypt(ed)?)?$' = 1
+	'\.te?xt$' = 5
+  '\.html?$' = 1
 }
 
 
@@ -778,27 +778,32 @@ foreach($client in $clientAddresses) {
 		if($TrackedFilenameLocations.UserProfiles -eq $True) {
 			Write-Host "------ User Profiles"
 			$UserProfileCounts = @{}
-			$ProfileContents = Invoke-Command @invokeParams -ScriptBlock {
+			$UserProfiles = Invoke-Command @invokeParams -ScriptBlock {
 				# Get a list of the user profiles on the target machine.
 				# !!!! WARNING: This script makes an assumption that user profiles are located under C:\Users !
-				$UserProfiles = (Get-ChildItem -Path 'C:\Users' `
-					| Where-Object -Property Attributes -Like '*Directory*').FullName
-				# Get the actual contents of all the directories and send the full path + filename back out.
-				$UserProfiles | ForEach-Object { Get-ChildItem -Path $_ -Recurse | Sort-Object LastWriteTime }
+				(Get-ChildItem -Path 'C:\Users' | Where-Object -Property Attributes -Like '*Directory*').FullName
 			}
+			$ProfileContents = Invoke-Command @invokeParams -ScriptBlock {
+				param( [System.Array]$paths = @() )
+				# Get the actual contents of all the directories and send the full path + filename back out.
+				$paths | ForEach-Object {
+					Write-Host "-------- Checking Path: $_"
+					Get-ChildItem -Path $_ -Recurse | Sort-Object LastWriteTime | Select-Object FullName
+				}
+			} -ArgumentList (,$UserProfiles)
 			# Iterate through the profile list.
 			foreach($prof in $UserProfiles) {
 				$PerProfileCount = @{}
 				# Go through each pattern being checked, and get a count for the amount of matching filenames.
 				foreach($pattern in $TrackedFilenamePatterns.Keys) {
-					$matchedfiles = $ProfileContents | Where-Object -Property FullName -Like "$($prof)\*" `
-						| Where-Object -Property Name -Match $pattern
-					$actualnames = ($matchedfiles | Select-Object FullName -Last $TrackedFilenameViewLimit).FullName
-					$filecount = $actualnames.Count
+					$matchedfiles = $ProfileContents | ForEach-Object {
+						if($_.FullName -Like "$($prof)\*" -And $_.FullName -Match $pattern) { $_.FullName }
+					}
+					$filecount = $matchedfiles.Count
 					if($filecount -eq $null) { $filecount = 0 }
 					# Add the count onto the per-profile object, as well as the associated filenames for info later.
 					$PerProfileCount.Add($pattern, $filecount)
-					$PerProfileCount.Add("FILES_$($pattern)", $actualnames)
+					$PerProfileCount.Add("FILES_$($pattern)", ($matchedfiles | Select-Object -Last $TrackedFilenameViewLimit))
 				}
 				# Add the per-profile object to this wrapper.
 				$UserProfileCounts.Add($prof, $PerProfileCount)
@@ -1107,6 +1112,7 @@ foreach($client in $clientAddresses) {
 						$perpatternDeltas.Add($pattern, $todayfilenames.$category.$subcategory.$pattern)
 						$perpatternDeltas.Add("Files_$($pattern)", $todayfilenames.$category.$subcategory."Files_$($pattern)")
 						$perpatternDeltas.Add("Threshold_$($pattern)", $itemThreshold)
+						$perpatternDeltas.Add("Prior_$($pattern)", $priorfilenames.$category.$subcategory.$pattern)
 					}
 				}
 				# Anything added to the per-pattern keys based on a passed threshold? If so, add the subcat to its object.
@@ -1275,12 +1281,18 @@ if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 						$selectedFields += "Location"
 						# If "selectedFields" contains more than just "Location" a table should be generated.
 						if($selectedFields.Count -gt 1) {
-							$intermediateTable = (($addToReport | ConvertTo-Json | ConvertFrom-Json) | Select-Object $selectedFields `
+							$intermediateTable = (($addToReport | ConvertTo-Json | ConvertFrom-Json) `
+								| Select-Object ($selectedFields | Sort-Object) `
 								| ConvertTo-Html -Fragment)
 							# Cheaply and hackily replace some of the table-header field names after the fact.
-							$intermediateTable = $intermediateTable -Replace ">Files_$([Regex]::Escape($item))</th", ">Most Recent Files</th"
-							$intermediateTable = $intermediateTable -Replace ">Threshold_$([Regex]::Escape($item))</th", ">Threshold to Pass</th"
-							$intermediateTable = $intermediateTable -Replace ">$([Regex]::Escape($item))</th", ">Occurrences</th"
+							$intermediateTable = $intermediateTable -Replace `
+								">Files_$([Regex]::Escape($item))</th", ">Most Recent Files</th"
+							$intermediateTable = $intermediateTable -Replace `
+								">Threshold_$([Regex]::Escape($item))</th", ">Threshold to Pass</th"
+							$intermediateTable = $intermediateTable -Replace `
+								">$([Regex]::Escape($item))</th", ">New Count</th"
+							$intermediateTable = $intermediateTable -Replace `
+								">Prior_$([Regex]::Escape($item))</th", ">Old Count</th"
 							# Add it to the tables string and thusly onto the body pipeline.
 							$allTables += "<span style='color:black;font-size:14px;'><b>Pattern</b>: $($item)</span><br />`n" `
 								+ $intermediateTable
@@ -1288,12 +1300,10 @@ if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 					}
 				}
 			}
-			# Convert the collection of objects into a custom object, select the needed fields, and output a clean HTML table.
-			$fillvar = $allTables
 			# Add the collected information to the report.
 			$NOTIFBODY_Rpt += "<span class='SectionHeader'>Filename Trackers</span><br />`n"
 			$NOTIFBODY_Rpt += "<div class='DiffsSection'>`n"
-			$NOTIFBODY_Rpt += "$($fillvar)<br />`n"
+			$NOTIFBODY_Rpt += "$($allTables)<br /><br />`n"
 			$NOTIFBODY_Rpt += "</div>`n"
 		}
 		

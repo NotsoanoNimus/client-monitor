@@ -188,3 +188,5 @@ Keep in mind that regardless of the options you choose to implement as the admin
 - ~~Make compared & selected fields from each category (StoreApps, Services, etc) dynamic using a single tweak. Basically allow a single tweak to define which fields are discovered and compared among the categories.~~
 - ~~Add some form of SMTP relay using authentication, perhaps with `Get-Credential`. Haven't looked into this too much yet.~~
 - _(?)_ Add a way to dynamically change the indexing format used for keying certain values.
+- Fix up a lot of the filename tracking contexts and ensure their integrities.
+- Fix the table output sorting (columns will get skewed in the notification output between similar items).
