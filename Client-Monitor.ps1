@@ -171,7 +171,7 @@ $NotificationsFiltersBlacklist = $True
 $NotificationsShowFilteredItem = $True
 # Set the mode for filtering to regex. This will cause the strings entered below to be run against the -Match operator
 #    rather than the -Like operator. Do not change this setting unless you'd like to use regex filtering instead.
-$NotificationFiltersRegex = $False
+$NotificationFiltersRegex = $True
 # A string (HTML formatting optional) to insert when an item is filtered from a notification, if the above value is $True.
 $NotificationsFilteredIndicator = "<b>Filtered Items</b>"
 <# Define strings (wildcards supported) which should be white/black-listed for allowance into notifications.
@@ -187,9 +187,10 @@ $NotificationsFilters = @{
 		Removed = @()
 		Changed = @()
 	}
+	# _[a-fA-F0-9]{6}$ : mask modified services after a windows reboot that show up as "new"/"removed" under the new hash
 	Services = @{
-		New = @()
-		Removed = @()
+		New = @('_[a-fA-F0-9]{6,8}$')
+		Removed = @('_[a-fA-F0-9]{6,8}$')
 		Changed = @()
 	}
 	StoreApps = @{
@@ -797,7 +798,9 @@ foreach($client in $clientAddresses) {
 				# Go through each pattern being checked, and get a count for the amount of matching filenames.
 				foreach($pattern in $TrackedFilenamePatterns.Keys) {
 					$matchedfiles = $ProfileContents | ForEach-Object {
-						if($_.FullName -Like "$($prof)\*" -And $_.FullName -Match $pattern) { $_.FullName }
+						if($_.FullName -Like "$($prof)\*" -And $_.FullName -Match $pattern) {
+							$_.FullName -Replace "^$([Regex]::Escape($prof))", "."
+						}
 					}
 					$filecount = $matchedfiles.Count
 					if($filecount -eq $null) { $filecount = 0 }
@@ -1112,7 +1115,7 @@ foreach($client in $clientAddresses) {
 						$perpatternDeltas.Add($pattern, $todayfilenames.$category.$subcategory.$pattern)
 						$perpatternDeltas.Add("Files_$($pattern)", $todayfilenames.$category.$subcategory."Files_$($pattern)")
 						$perpatternDeltas.Add("Threshold_$($pattern)", $itemThreshold)
-						$perpatternDeltas.Add("Prior_$($pattern)", $priorfilenames.$category.$subcategory.$pattern)
+						$perpatternDeltas.Add("__Prior_$($pattern)", $priorfilenames.$category.$subcategory.$pattern)
 					}
 				}
 				# Anything added to the per-pattern keys based on a passed threshold? If so, add the subcat to its object.
@@ -1292,7 +1295,7 @@ if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 							$intermediateTable = $intermediateTable -Replace `
 								">$([Regex]::Escape($item))</th", ">New Count</th"
 							$intermediateTable = $intermediateTable -Replace `
-								">Prior_$([Regex]::Escape($item))</th", ">Old Count</th"
+								">__Prior_$([Regex]::Escape($item))</th", ">Previous Count</th"
 							# Add it to the tables string and thusly onto the body pipeline.
 							$allTables += "<span style='color:black;font-size:14px;'><b>Pattern</b>: $($item)</span><br />`n" `
 								+ $intermediateTable
