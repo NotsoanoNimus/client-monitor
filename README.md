@@ -8,7 +8,7 @@ The security of this (Windows Firewall, SIEM, etc) is completely up to you.
 
 ## Monitored Locations & Properties
 This script includes monitoring and information-gathering in the following categories/locations.
-These variables can change as the script grows. 
+These variables can change as the script grows.
 Next to each category is the `unique key` format used to keep each tracked item unique.
 The format is written as `$(PropertyName)` for each field, where `PropertyName` is a field that can be _selected_ from the cmdlet used to get the information from the category.
 
@@ -118,6 +118,7 @@ Each tweak will include its own description (if its variable name isn't descript
   + **$NotificationsBodyOnNoChange** -- Body template for notifications informing of no changes.
 + **$NotificationsAsHTML** -- Whether or not to send emails with HTML formatting. If set to `$False` email notifications will be sent in plaintext.
   + The "class" tweaks in this section are really not important unless the name is clashing with another CSS class you write or use in the notifications.
++ **$NotificationsStripHeaders** -- Whether or not to strip out redundant table headers in each category. _Turned off_ by default.
   + **$NotificationsHTMLWrapper** -- The HTML notification wrapper format, including all content between the `<HTML>` tags. The `[[BODYTEXT]]` item here is later replaced with the generated body of the notification.
 + **$NotificationsChangesBodyHeader** -- The header/upper section used in notifications that _will_ have some changes noted for clients.
   + The actual Body text is appended to this value _later_, forming the `[[BODYTEXT]]` piece to either `(a)` fit inside the **HTML wrapper tweak**, or `(b)` be inserted as plaintext into the notification.
@@ -189,4 +190,5 @@ Keep in mind that regardless of the options you choose to implement as the admin
 - ~~Add some form of SMTP relay using authentication, perhaps with `Get-Credential`. Haven't looked into this too much yet.~~
 - _(?)_ Add a way to dynamically change the indexing format used for keying certain values.
 - Fix up a lot of the filename tracking contexts and ensure their integrities.
-- Fix the table output sorting (columns will get skewed in the notification output between similar items).
+- **Done to a minor degree** Fix the table output sorting (columns will get skewed in the notification output between similar items).
+- Perhaps make filtering conditional or more specific, maybe based on the key/value pairs. Having a plain regex for the _whole_ table makes it a pain sometimes to guarantee that the regex won't mistakenly filter something that might be malicious.

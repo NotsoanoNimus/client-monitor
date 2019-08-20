@@ -60,7 +60,7 @@ $DomainSuffixRegex = ($DomainSuffix -Replace '\.', '\.') + '$'
 #    Ex: $DomainUserFilter = "(Name -Like 'HOSPITAL-DESKTOP-*') -Or (Name -Like 'FACILITIES-*')"
 $DomainUserFilter = "(Name -Like 'wkstn*')"
 
-# The folder in which to store reports for comparison 
+# The folder in which to store reports for comparison
 $ReportsDirectory = "$ENV:USERPROFILE"
 
 <# How many hours to keep 'reports' in the above directory. After the given hours below,
@@ -77,7 +77,13 @@ $NotificationsSubject = "Summary of User Environment Changes"
 # Which mail server to dispatch the notification to/through, and the target relay port.
 $NotificationsServer = 'relay.internaldomain.withoutauthentication.com'
 $NotificationsServerPort = 25
- 
+
+# Enable/Disable SSL in the SMTP transaction for dispatching notifications. Turned off by default.
+$NotificationsRelayWithSSL = $False
+# If this is set to $True then the script must use the -SmtpCredential parameter with a PowerShell credentials object passed to it.
+# See the Examples section of this README document below for more information on how to pass credentials to this script.
+$NotificationsRelayWithCredential = $False
+
 # Generate a notification even when there aren't any changes? Disabled by default.
 #  This is more useful for just knowing when the script is running and monitoring if it's actually doing its job.
 $NotificationOnNoChange = $True
@@ -91,6 +97,8 @@ Either the items that <i>did</i> change were filtered, or nothing has changed at
 
 # By default, all notifications are sent as HTML.
 $NotificationsAsHTML = $True
+# Strip redundant table header fields in the email notifications? Default no.
+$NotificationsStripHeaders = $False
 # "Advanced" settings for the HTML notifications. These are just class names for certain objects used in the HTML notifs.
 #    They're important to define, less important to change.
 $NotificationsHTMLNewValClass = 'NewText'
@@ -107,6 +115,7 @@ $NotificationsHTMLWrapper = @"
 	table, th, td { border: 1px solid black; }
 	th, td { text-align: left; padding: 10px; }
 	th { background-color: #CCCCCC; }
+	td { background-color: #FFFFFF; }
 	tr:hover, td:hover { background-color: #EDEDED; }
 	hr { padding: 0; margin: 10px auto; border: none; }
 	p { font-size: 12px; color: black; }
@@ -119,7 +128,7 @@ $NotificationsHTMLWrapper = @"
 	.$NotificationsHTMLNewValClass { color: #2222AA; font-size: 14px; }
 	.$NotificationsHTMLDiffValClass { font-weight: bold; font-style: italic; }
 	.SectionHeader { font-size: 20px; font-weight: bold; text-decoration: underline; }
-	div.DiffsSection { margin-left: 20px; }
+	div.DiffsSection { margin-left: 20px !important; }
 </style>
 </head>
 <body>
@@ -231,7 +240,7 @@ $TrackedFilenameLocationsCustom = @{
 <# The filename patterns (regex) to track across all of the above directories. Note that these regexes allow you full control
  #    and are NOT restricted to just filename extension. So take care with this, as entering '.exe' for example will pick up
  #    the filename 'processexecute.txt' because the regex isn't specifying the ^ or $ characters and isn't escaping the .
- # ALSO: The threshold at which the delta will be included in the report. For example, a threshold of 10 means 
+ # ALSO: The threshold at which the delta will be included in the report. For example, a threshold of 10 means
  #    that if 10 MORE files than the last check are detected, then it should be rolled into the notification for changes.
  #
  # So the format here is ---> [REGEX] = [THRESHOLD]
@@ -241,7 +250,7 @@ $TrackedFilenamePatterns = @{
 	'\.bat$' = 2
 	'\.enc(rypt(ed)?)?$' = 1
 	'\.te?xt$' = 5
-  '\.html?$' = 1
+	'\.html?$' = 1
 }
 
 
@@ -299,6 +308,10 @@ Function Send-Email() {
 	)
 	# Wrap the message body with the HTML template, if NotificationsAsHTML is set to True.
 	if($NotificationsAsHTML -eq $True) {
+		# BUGFIX: 20190820
+		### Fixed a bug where '$_' in the $BODY value would expand to the [[BODYTEXT]] value in the email.
+		$BODY = $BODY -Replace '\$_', '$$$$_'
+		##########
 		$BODY = $NotificationsHTMLWrapper -Replace '\[\[BODYTEXT\]\]', "$BODY"
 	} else {
 		# WARNING!!!!!!!!!
@@ -312,10 +325,10 @@ Function Send-Email() {
 	$emailParams = @{
 		From = $FROM; To = $TO; Subject = $SUBJECT; Body = $BODY; SmtpServer = $RELAYSERVER; Port = $RELAYPORT
 	}
-	
+
 	# If there's a BCC argument to the script, split the string into an array of recipients along the comma characters.
 	if($BCC -ne "") { $BCC = $BCC.Split(",").Trim(); $emailParams.Add("Bcc", $BCC) }
-		
+
 	if($NotificationsRelayWithCredential -eq $True) {
 		# Relay with auth is on, is a valid SmtpCredential object provided?
 		if($SmtpCredential -eq $null -Or $SmtpCredential -IsNot [PSCredential]) {
@@ -327,7 +340,7 @@ Function Send-Email() {
 			$emailParams.Add("Credential", $SmtpCredential)
 		}
 	}
-	
+
 	# Dispatch the email to the target server.
 	Send-MailMessage @emailParams -BodyAsHtml:$NotificationsAsHTML -UseSsl:$NotificationsRelayWithSSL
 	# Return the success status of sending the message.
@@ -338,11 +351,11 @@ Function Send-Email() {
 # Write the report object as a JSON to the target output file.
 Function Write-Report() {
 	param( [System.Object]$outputJSON = @{} )
-	
+
 	# Today's date, format of YYYY-MM-DD-HH_MM
 	$dateTag = Get-Date -UFormat %Y-%m-%d-%H_%M
 	$targetFile = $ReportsDirectory + "\Report-$($outputJSON.Hostname)-$dateTag.txt"
-	
+
 	# Write the output as a JSON object to the report file (targetFile).
 	Write-Output $outputJSON | ConvertTo-JSON -Depth 3 -Compress:$NoMiniSet | Out-File -FilePath $targetFile
 }
@@ -486,6 +499,7 @@ Function Add-To-Report() {
 	$spanDifferentItem = "<span class='$NotificationsHTMLDiffValClass'>"
 	# New Objects section. If the amount of hashtable keys is >0, check notification filters and
 	#    then iterate the keys and add the object to the table.
+	$StripTableHeaders = $False
 	if($NewObject.Keys.Count -gt 0) {
 		$NOTIFSXN_New = "<span class='SectionHeader'>New $ItemName</span><br />`n"
 		$SomethingUnfiltered = $False   # Used to indicate if something NOT filtered was present.
@@ -499,6 +513,9 @@ Function Add-To-Report() {
 				continue
 			}
 			$fillVar = $NewObject.$new | ConvertTo-HTML -Fragment
+			if($StripTableHeaders -eq $True -And $NotificationsStripHeaders -eq $True) {
+                $fillVar = $fillVar -Replace '<tr>\s*<th>.*?</th>\s*</tr>'
+            }
 			# Any td tags with nothing in between should be manually filled in with a "null" piece of text, to avoid empty spots.
 			$fillVar = $fillVar -Replace '<td>(<span class=.*?></span>)?</td>', '<td>null</td>'
 			$NOTIFSXN_New += "<div class='DiffsSection'>`n"
@@ -507,6 +524,8 @@ Function Add-To-Report() {
 			$NOTIFSXN_New += "</div>`n"
 			# If this point is reached then there is something that was NOT filtered.
 			$SomethingUnfiltered = $True
+			# After the first run through, set stripHeaders to True to strip out <th> tags from the HTML tables.
+			$StripTableHeaders = $True
 		}
 		# Count up the amount of filtered objects and add it to the report.
 		if($filteredCount -gt 0) {
@@ -516,6 +535,7 @@ Function Add-To-Report() {
 		if(($SomethingUnfiltered -eq $True) -Or ($NotificationsShowFilteredItem -eq $True)) { $NOTIFSXN += $NOTIFSXN_New }
 	}
 	# Removed Objects section. Same process as the "New Objects" section.
+	$StripTableHeaders = $False
 	if($RemovedObject.Keys.Count -gt 0) {
 		$NOTIFSXN_Removed = "<span class='SectionHeader'>Removed $ItemName</span><br />`n"
 		$SomethingUnfiltered = $False   # Used to indicate if something NOT filtered was present.
@@ -529,6 +549,9 @@ Function Add-To-Report() {
 				continue
 			}
 			$fillVar = $RemovedObject.$removed | ConvertTo-HTML -Fragment
+			if($StripTableHeaders -eq $True -And $NotificationsStripHeaders -eq $True) {
+                $fillVar = $fillVar -Replace '<tr>\s*<th>.*?</th>\s*</tr>'
+            }
 			# Any td tags with nothing in between should be manually filled in with a "null" piece of text, to avoid empty spots.
 			$fillVar = $fillVar -Replace '<td>(<span class=.*?></span>)?</td>', '<td>null</td>'
 			$NOTIFSXN_Removed += "<div class='DiffsSection'>`n"
@@ -537,6 +560,8 @@ Function Add-To-Report() {
 			$NOTIFSXN_Removed += "</div>`n"
 			# If this point is reached then there is something that was NOT filtered.
 			$SomethingUnfiltered = $True
+			# After the first run through, set stripHeaders to True to strip out <th> tags from the HTML tables.
+			$StripTableHeaders = $True
 		}
 		# Count up the amount of filtered objects and add it to the report.
 		if($filteredCount -gt 0) {
@@ -546,6 +571,7 @@ Function Add-To-Report() {
 		if(($SomethingUnfiltered -eq $True) -Or ($NotificationsShowFilteredItem -eq $True)) { $NOTIFSXN += $NOTIFSXN_Removed }
 	}
 	# Changed Objects section.
+	$StripTableHeaders = $False
 	if($ChangedObject.Keys.Count -gt 0) {
 		$NOTIFSXN_Changed = "<span class='SectionHeader'>Changed $ItemName</span><br />`n"
 		$SomethingUnfiltered = $False   # Used to indicate if something NOT filtered was present.
@@ -591,6 +617,9 @@ Function Add-To-Report() {
 			$tableOut = (@($tablePriors,$tableNews) | ConvertTo-Json | ConvertFrom-Json) | ConvertTo-Html -Fragment
 			# Ensure that pieces aren't added to the table as HTML special chars ("&lt;"). Allows for formatting w/ SPAN.
 			$finalTable = [System.Web.HttpUtility]::HtmlDecode($tableOut)
+			if($StripTableHeaders -eq $True -And $NotificationsStripHeaders -eq $True) {
+                $finalTable = $finalTable -Replace '<tr>\s*<th>.*?</th>\s*</tr>'
+            }
 			# Add it to the string and close the div tag as appropriate.
 			$NOTIFSXN_Changed += "<div class='DiffsSection'>`n"
 			$NOTIFSXN_Changed += "<span style='color:black;font-size:14px;'><b>Name</b>: $changed</span><br />`n"
@@ -598,6 +627,8 @@ Function Add-To-Report() {
 			$NOTIFSXN_Changed += "</div>`n"
 			# If this point is reached then there is something that was NOT filtered.
 			$SomethingUnfiltered = $True
+			# After the first run through, set stripHeaders to True to strip out <th> tags from the HTML tables.
+			$StripTableHeaders = $True
 		}
 		# Count up the amount of filtered objects and add it to the report.
 		if($filteredCount -gt 0) {
@@ -633,7 +664,10 @@ if($clientsList -eq "use-AD-list") {
 		$hostname = $line.Name
 		$address = Parse-Hostnames($hostname)
 		# Sanity check, ensuring it's not a duplicate and that it exists.
-		if($address -eq $null -Or $clientAddresses.Contains($address)) { continue }
+		if($address -eq $null -Or $clientAddresses.Contains($address)) {
+			Write-Host "~~~~ Workstation $hostname did not return a valid address. Excluding from report." -ForegroundColor Red
+			continue
+		}
 		# If the hostname doesn't include the local domain name (listed at the initial section of the script), append it.
 		if(-Not($hostname -Match $DomainSuffixRegex)) { $hostname = $hostname + $DomainSuffix }
 		# Add the client address and hostname onto the hashtable, then push it onto $clientAddresses.
@@ -703,13 +737,13 @@ foreach($client in $clientAddresses) {
 	}
 	# Create a "dummy" (reference) object for the null array.
 	$deltasObjectDummy = $deltasObject | Select-Object *
-	
+
 	# Write the current client to the terminal/host for tracking/debugging.
 	Write-Host "Hostname: " -NoNewLine
 	Write-Host "$($client.Hostname)" -ForegroundColor Cyan
 	Write-Host "IP: " -NoNewLine
 	Write-Host "$($client.IP)" -ForegroundColor Cyan
-	
+
 	Write-Host "-- Pulling prior report."
 	# Collect the top of the list for most recent files/reports matching the given hostname.
 	#    If an object isn't returned from the query below, assume there is no "prior" report and act accordingly.
@@ -724,34 +758,38 @@ foreach($client in $clientAddresses) {
 		$DateofLastReport = [Regex]::Matches($LastReportMade, '\d{4}-\d{2}-\d{2}-\d{2}_\d{2}')[0].Value
 		$MostRecentReport = Pull-Report "$($client.Hostname)" "$DateofLastReport"
 	}
-	
-	
+
+
 	# Create a parameters object for Invoke.
 	$invokeParams = @{}
 	# Is the tested client the local host? If not, set the ComputerName parameter to the client hostname.
 	if(-Not($client.Hostname -Match '^LOCALHOST\.?')) {
 		$invokeParams.Add("ComputerName", "$($client.Hostname)")
 	}
-	
+
 	Write-Host "-- Running connectivity tests for WinRM and ICMP."
-	
+
+	$priorELVL = $ErrorActionPreference; $ErrorActionPreference = 'SilentlyContinue'   # shhhh...
 	# Run a basic ICMP ping test against the target to see if it's online. Add it to the report.
 	Test-Connection "$($client.Hostname)" -Count 1 | Out-Null
 	$FullReport.IsOnline = $?
-	
+
 	# Check if the target is invokable at all, i.e. can we run WinRM commands on it?
 	Invoke-Command @invokeParams -ScriptBlock { Get-Culture } | Out-Null
 	$FullReport.Invokable = $?
-	
+
+	# Restore the previous error-output action.
+	$ErrorActionPreference = $priorELVL
+
 	# Compare invokability and availability to the last report, as long as this ISN'T the first report.
 	if((($FullReport.Invokable -ne $MostRecentReport.Invokable) -Or
 			($FullReport.IsOnline -ne $MostRecentReport.IsOnline)) -And
 			(-Not($LastReportMade.Length -le 0))) {
 			$deltasObject.OnlineStatusChange = ($FullReport.IsOnline -ne $MostRecentReport.IsOnline)
 			$deltasObject.InvokableChange = ($FullReport.Invokable -ne $MostRecentReport.Invokable)
-			$deltas.Add("$($client.Hostname)", $deltasObject)	
+			$deltas.Add("$($client.Hostname)", $deltasObject)
 		}
-	
+
 	# The target host cannot be invoked. Note this, generate the report, clean old reports, and skip.
 	if ($FullReport.Invokable -eq $False) {
 		Write-Host "**** WinRM is not active on the target."
@@ -759,22 +797,22 @@ foreach($client in $clientAddresses) {
 		Clean-Reports "$($client.Hostname)"
 		continue
 	}
-	
-	
+
+
 	<# Harvest an object full of data from the client.
 	 #   PSParentPath is using the registry key where we've found the entry, so it shouldn't ever be null.
 	 #   PSChildName is the registry key's name. So if there is not any other info, at least get the key name.
 	 #>
-	 
+
 	Write-Host "-- Collecting information about the target machine and building a report."
-	
+
 	####### TODO: PIECES OF THIS SECTION CAN BE MODULARIZED INTO A GENERIC FUNCTION #######
 	# -----------------------------------------
 	# Iterate through the filename trackers, if enabled.
 	if($FilenameTracking -eq $True) {
 		Write-Host "---- Tracking filenames across the below directories or places:"
 		$TrackedFiles = @{}
-		
+
 		# Check user directories, if enabled.
 		if($TrackedFilenameLocations.UserProfiles -eq $True) {
 			Write-Host "------ User Profiles"
@@ -814,7 +852,7 @@ foreach($client in $clientAddresses) {
 			# Add the totals under the "UserProfileCounts" field.
 			$TrackedFiles.Add("UserProfilesCounts", $UserProfileCounts)
 		} else { $TrackedFiles.Add("UserProfilesCounts", @{}) }
-		
+
 		# This section should be used with caution, as it may cause a delay in script processing per client.
 		if($TrackedFilenameLocations.SystemFiles -eq $True) {
 			Write-Host "------ The %SYSTEMROOT% directory (typically 'C:\Windows')"
@@ -837,7 +875,7 @@ foreach($client in $clientAddresses) {
 			$IntermediateObject = @{}; $IntermediateObject.Add("SystemFiles", $FoundPatterns)
 			$TrackedFiles.Add("SystemFilesCounts", $IntermediateObject)
 		} else { $TrackedFiles.Add("SystemFilesCounts", @{}) }
-		
+
 		# This section should be used with caution, as it may cause a delay in script processing per client.
 		if($TrackedFilenameLocations.ProgramData -eq $True) {
 			Write-Host "------ The %ProgramData% directory (typically 'C:\ProgramData')"
@@ -861,7 +899,7 @@ foreach($client in $clientAddresses) {
 			$IntermediateObject = @{}; $IntermediateObject.Add("ProgramFiles", $FoundPatterns)
 			$TrackedFiles.Add("ProgramFilesCounts", $IntermediateObject)
 		} else { $TrackedFiles.Add("ProgramFilesCounts", @{}) }
-		
+
 		# Are there any custom directories? If so, iterate the object.
 		if($TrackedFilenameLocationsCustom.Keys.Count -gt 0) {
 			Write-Host "------ Custom Directories:"
@@ -895,7 +933,7 @@ foreach($client in $clientAddresses) {
 			# Add the main tracker for custom directories to the meta/super object.
 			$TrackedFiles.Add("CustomLocationsCounts", $CustomDirTrackers)
 		} else { $TrackedFiles.Add("CustomLocationsCounts", @{}) }
-		
+
 		# Add the meta/super object to the report, and also index the extensions/expressions used.
 		$FullReport.Add("FilenameTrackers", $TrackedFiles)
 		$TrackedFilenamePatternsAsArray = @(); $TrackedFilenamePatterns.Keys `
@@ -912,8 +950,8 @@ foreach($client in $clientAddresses) {
 		 #        and the count as the value. There is also a "FILES_[pattern]" key for the actual full filenames found.
 		 #>
 	}
-	
-	
+
+
 	# -----------------------------------------
 	# Collect installed applications at multiple layers.
 	Write-Host "---- Gathering installed applications..."
@@ -947,8 +985,8 @@ foreach($client in $clientAddresses) {
 	# Add the items to the new report.
 	$FullReport.Add("InstalledAppsIndex", $installedAppsIndex)
 	$FullReport.Add("InstalledApps", $reportInstalledApps)
-	
-		
+
+
 	# -----------------------------------------
 	# Harvest Windows Store-based applications.
 	Write-Host "---- Gathering store applications..."
@@ -985,8 +1023,8 @@ foreach($client in $clientAddresses) {
 	# Add it to the report.
 	$FullReport.Add("StoreAppsIndex", $storeAppsIndex)
 	$FullReport.Add("StoreApps", $reportStoreApps)
-	
-	
+
+
 	# -----------------------------------------
 	# Harvest startup applications.
 	Write-Host "---- Gathering startup applications..."
@@ -1026,8 +1064,8 @@ foreach($client in $clientAddresses) {
 	# Add it to the report.
 	$FullReport.Add("StartupAppsIndex", $startupAppsIndex)
 	$FullReport.Add("StartupApps", $reportStartupApps)
-		
-	
+
+
 	# -----------------------------------------
 	# Get a list of services (all of them).
 	Write-Host "---- Gathering services..."
@@ -1044,13 +1082,13 @@ foreach($client in $clientAddresses) {
 	# Add it to the report.
 	$FullReport.Add("ServicesIndex", $servicesIndex)
 	$FullReport.Add("Services", $reportServices)
-	
-	
+
+
 	# -----------------------------------------
 	# Get scheduled tasks and jobs.
 	Write-Host "---- Gathering scheduled tasks..."
 	$taskList = Invoke-Command @invokeParams -ScriptBlock { Get-ScheduledTask }
-	$reportTasks = @{}; $scheduledTasksIndex = @() 
+	$reportTasks = @{}; $scheduledTasksIndex = @()
 	foreach($task in $taskList) {
 		$keyname = "$($task.URI)"
 		$reportTasks.Add($keyname, `
@@ -1061,15 +1099,15 @@ foreach($client in $clientAddresses) {
 	# Add it to the report.
 	$FullReport.Add("ScheduledTasksIndex", $scheduledTasksIndex)
 	$FullReport.Add("ScheduledTasks", $reportTasks)
-	
-	
+
+
 	# -----------------------------------------
 	# Generate the final report file with all of the information.
 	Write-Host "---- Finalizing generated report."
 	Write-Report($FullReport)
-	
-	
-	
+
+
+
 	#####################################################################
 	# COMPARISON SECTION.
 	# All comparisons will use the most recent report as the reference object, comparing AGAINST the prior report.
@@ -1082,8 +1120,8 @@ foreach($client in $clientAddresses) {
 	# HashTable -> JSON -> PSCustomObject, so that it matches the import that the $MostRecentReport variable went through.
 	$FullReportIntermediate = $FullReport | ConvertTo-Json -Depth 3
 	$TodaysReport = $FullReportIntermediate | ConvertFrom-Json
-	
-	
+
+
 	# -----------------------------------------
 	# Filename Tracking.
 	if($FilenameTracking -eq $True) {
@@ -1129,8 +1167,8 @@ foreach($client in $clientAddresses) {
 		# And now that the FOR loops are complete, take a look at categoryDeltas. If the key count is >0 there are changes.
 		if($categoryDeltas.Keys.Count -gt 0) { $deltasObject.FilenameViolations = $categoryDeltas }
 	} else { $deltasObject.FilenameViolations = @{} }
-	
-	
+
+
 	# -----------------------------------------
 	# Compare Services.
 	Compare-Deltas `
@@ -1140,7 +1178,7 @@ foreach($client in $clientAddresses) {
 		-DeltasObjRemoved $deltasObject.RemovedServices `
 		-Todays $TodaysReport.Services -TodaysIndex $TodaysReport.ServicesIndex `
 		-Priors $MostRecentReport.Services -PriorsIndex $MostRecentReport.ServicesIndex
-	
+
 	# -----------------------------------------
 	# Compare ScheduledTasks.
 	Compare-Deltas `
@@ -1150,7 +1188,7 @@ foreach($client in $clientAddresses) {
 		-DeltasObjRemoved $deltasObject.RemovedScheduledTasks `
 		-Todays $TodaysReport.ScheduledTasks -TodaysIndex $TodaysReport.ScheduledTasksIndex `
 		-Priors $MostRecentReport.ScheduledTasks -PriorsIndex $MostRecentReport.ScheduledTasksIndex
-	
+
 	# -----------------------------------------
 	# Compare StoreApps.
 	# Add on the static (always-checked) tracker for the StoreApps section.
@@ -1163,7 +1201,7 @@ foreach($client in $clientAddresses) {
 		-DeltasObjRemoved $deltasObject.RemovedStoreApps `
 		-Todays $TodaysReport.StoreApps -TodaysIndex $TodaysReport.StoreAppsIndex `
 		-Priors $MostRecentReport.StoreApps -PriorsIndex $MostRecentReport.StoreAppsIndex
-	
+
 	# -----------------------------------------
 	# Compare StartupApps.
 	Compare-Deltas `
@@ -1173,7 +1211,7 @@ foreach($client in $clientAddresses) {
 		-DeltasObjRemoved $deltasObject.RemovedStartupApps `
 		-Todays $TodaysReport.StartupApps -TodaysIndex $TodaysReport.StartupAppsIndex `
 		-Priors $MostRecentReport.StartupApps -PriorsIndex $MostRecentReport.StartupAppsIndex
-	
+
 	# -----------------------------------------
 	# Compare InstalledApps.
 	Compare-Deltas `
@@ -1183,8 +1221,8 @@ foreach($client in $clientAddresses) {
 		-DeltasObjRemoved $deltasObject.RemovedInstalledApps `
 		-Todays $TodaysReport.InstalledApps -TodaysIndex $TodaysReport.InstalledAppsIndex `
 		-Priors $MostRecentReport.InstalledApps -PriorsIndex $MostRecentReport.InstalledAppsIndex
-		
-	
+
+
 	# Compare the AMOUNT of keys in each item within the deltasObject against its blank "dummy" variable.
 	# If the amount of keys differs in any way that means some changes were added and the deltas must be noted.
 	#  NOTE: Don't want to compare "OnlineStatusChange" and "InvokableChange" since these aren't object containers.
@@ -1199,8 +1237,8 @@ foreach($client in $clientAddresses) {
 		($deltasObject.InvokableChange -eq $True) -Or
 		($deltasObject.OnlineStatusChange -eq $True)
 	) { $deltas.Add("$($client.Hostname)", $deltasObject) | Out-Null }
-	
-	
+
+
 	#####################################################################
 	# CLEANUP SECTION.
 	# Clean up the script and reports according to the retention policy.
@@ -1220,14 +1258,15 @@ if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 	Write-Host "`n`nComparing deltas and generating a notification if applicable." -ForegroundColor White
 	# Create an outer wrapper for the loop below, to detect if any info is picked up at all.
 	$NOTIFBODY_Wrapper = ""
+	$FlipColors = $True
 	# Now process the information from the deltas and generate a notification if needed.
-	foreach($client in $deltas.Keys) {
+	foreach($client in ($deltas.Keys | Sort-Object)) {
 		# Declare a new "tracker" variable/container for all report info returned from the categories.
 		#    If this is blank for any reason, the client will ommitted.
 		$NOTIFBODY_Rpt = ""
 		# Set the $clientDeltas object equal to the per-client changes so they can be iterated.
 		$clientDeltas = $deltas.$client
-		
+
 		<# First thing to do is check that the Invokable or Online statuses have changed, because if they have,
 		 #    the rest of the object won't matter to parse.
 		 #    This is noteworthy because it prevents a host from coming back online after an "outage" and having ALL
@@ -1259,8 +1298,8 @@ if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 			$NOTIFBODY += $NOTIFBODY_Rpt
 			continue
 		}
-		
-		
+
+
 		# -----------------------------------------
 		# FILENAME PATTERNS
 		if($FilenameTracking -eq $True -And $clientDeltas.FilenameViolations.Count -gt 0) {
@@ -1309,8 +1348,8 @@ if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 			$NOTIFBODY_Rpt += "$($allTables)<br /><br />`n"
 			$NOTIFBODY_Rpt += "</div>`n"
 		}
-		
-		
+
+
 		# Now that the reachability flags & filenames are reviewed, the rest should be easy variable-matching and iterating keys.
 		#    Use a modularized function to add to the report body if the given category/section is enabled with the triggers.
 		# -----------------------------------------
@@ -1358,16 +1397,20 @@ if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 				-ChangedObject $clientDeltas.ChangedScheduledTasks -ItemName "Scheduled Tasks" `
 				-ItemType "ScheduledTasks"
 		}
-		
+
 		# ##############################################
 		# ########## BUILD THE ENTIRE SECTION ##########
 		if($NOTIFBODY_Rpt -ne "") {
 			# Inject the hostname of the client into the email digest, followed by the Rpt subsection that's been constructed.
-			$NOTIFBODY_Wrapper += "`n`n<hr /><h2>$client</h2>`n"
-			$NOTIFBODY_Wrapper += $NOTIFBODY_Rpt
+			$bgColor = if($FlipColors -eq $True) {"FFFFFF"} else {"EDEDED"}
+			$NOTIFBODY_Wrapper += "`n`n<hr /><table style='border-collapse:collapse;' width='100%'><tr>"
+			$NOTIFBODY_Wrapper += "<td bgColor='#$($bgColor)' width='100%' style='border:none;background-color:#$($bgColor);'>"
+			$NOTIFBODY_Wrapper += "<h2>$client</h2>`n" + $NOTIFBODY_Rpt + "</td></tr></table>"
+			# Swap colors.
+			$FlipColors = -Not $FlipColors
 		}
 	}
-	
+
 	# If the notification body is still null, inject the No Client Changes message.
 	#    Otherwise, build the full report.
 	if($NOTIFBODY_Wrapper.Trim() -eq "" -And $NotificationOnNoChange -eq $True) { $NOTIFBODY += $NotificationsBodyOnNoChange }
@@ -1377,7 +1420,7 @@ if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 		$NOTIFBODY = $NotificationsChangesBodyHeader
 		$NOTIFBODY += $NOTIFBODY_Wrapper
 	}
-	
+
 	# If NOTIFBODY isn't equal to "no-change" then send something out. Otherwise be silent.
 	#    This is different because it's not relying on the clientDeltas object to track necessities of notifications.
 	#    Instead it can recognize that there ARE changes/deltas but they've ALL been filtered out, and user doesn't want notif.
