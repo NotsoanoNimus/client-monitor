@@ -156,10 +156,10 @@ $NotificationsChangesBodyHeader += "and anything in <span class='$NotificationsH
 
 
 <# Tracked values across each given category. These values are used in the "Select-Object" method on the queries
- #    for each item in the set returned per category, and also in the later comparisons.
- # NOTE: Do not include "special" fields used in the script below. Off-limits field include:
- #    STOREAPPS : PackageUserInformation
- #>
+    #    for each item in the set returned per category, and also in the later comparisons.
+    # NOTE: Do not include "special" fields used in the script below. Off-limits field include:
+    #    STOREAPPS : PackageUserInformation
+    #>
 $TrackedValues = @{
 	InstalledApps = @("DisplayName", "DisplayVersion", "Publisher", "InstallDate", "InstallLocation")
 	Services = @("DisplayName", "ServiceName", "StartType") #"ServiceType", "Status",
@@ -170,9 +170,9 @@ $TrackedValues = @{
 
 
 <# The events or triggers used for notifications to be dispatched to the notifications address.
- #    This section effectively turns them on/off. Names are descriptive enough for the purpose.
- #    These are all enabled by default.
- #>
+    #    This section effectively turns them on/off. Names are descriptive enough for the purpose.
+    #    These are all enabled by default.
+    #>
 $NotificationsTriggers = @{
 	ReachabilityChange = $True
 	InstalledAppsChange = $True
@@ -193,12 +193,12 @@ $NotificationFiltersRegex = $True
 # A string (HTML formatting optional) to insert when an item is filtered from a notification, if the above value is $True.
 $NotificationsFilteredIndicator = "<b>Filtered Items</b>"
 <# Define strings (wildcards supported) which should be white/black-listed for allowance into notifications.
- #    The strings are ARRAYS of patterns. For example: @("win*","*micro*") will filter anything starting with "win" and
- #    anything containing the substring "micro".
- # NOTE: These filters apply to ALL data fields in the category and should be used with caution.
- #    If a service changes from "Group Policy Service" to "Microsoft GPO Svc" for example, and there's a "micro*" filter,
- #    you won't know about the change.
- #>
+    #    The strings are ARRAYS of patterns. For example: @("win*","*micro*") will filter anything starting with "win" and
+    #    anything containing the substring "micro".
+    # NOTE: These filters apply to ALL data fields in the category and should be used with caution.
+    #    If a service changes from "Group Policy Service" to "Microsoft GPO Svc" for example, and there's a "micro*" filter,
+    #    you won't know about the change.
+    #>
 $NotificationsFilters = @{
 	InstalledApps = @{
 		New = @()
@@ -246,13 +246,13 @@ $TrackedFilenameLocationsCustom = @{
 #	"C:\fakeplace" = $True
 }
 <# The filename patterns (regex) to track across all of the above directories. Note that these regexes allow you full control
- #    and are NOT restricted to just filename extension. So take care with this, as entering '.exe' for example will pick up
- #    the filename 'processexecute.txt' because the regex isn't specifying the ^ or $ characters and isn't escaping the .
- # ALSO: The threshold at which the delta will be included in the report. For example, a threshold of 10 means 
- #    that if 10 MORE files than the last check are detected, then it should be rolled into the notification for changes.
- #
- # So the format here is ---> [REGEX] = [THRESHOLD]
- #>
+    #    and are NOT restricted to just filename extension. So take care with this, as entering '.exe' for example will pick up
+    #    the filename 'processexecute.txt' because the regex isn't specifying the ^ or $ characters and isn't escaping the .
+    # ALSO: The threshold at which the delta will be included in the report. For example, a threshold of 10 means 
+    #    that if 10 MORE files than the last check are detected, then it should be rolled into the notification for changes.
+    #
+    # So the format here is ---> [REGEX] = [THRESHOLD]
+    #>
 $TrackedFilenamePatterns = @{
 	'\.exe$' = 2
 	'\.bat$' = 2
@@ -867,12 +867,12 @@ foreach($client in $clientAddresses) {
 	
 	# Compare invokability and availability to the last report, as long as this ISN'T the first report.
 	if((($FullReport.Invokable -ne $MostRecentReport.Invokable) -Or
-			($FullReport.IsOnline -ne $MostRecentReport.IsOnline)) -And
-			(-Not($LastReportMade.Length -le 0))) {
-			$deltasObject.OnlineStatusChange = ($FullReport.IsOnline -ne $MostRecentReport.IsOnline)
-			$deltasObject.InvokableChange = ($FullReport.Invokable -ne $MostRecentReport.Invokable)
-			$deltas.Add("$($client.Hostname)", $deltasObject)	
-		}
+		($FullReport.IsOnline -ne $MostRecentReport.IsOnline)) -And
+		(-Not($LastReportMade.Length -le 0))) {
+		    $deltasObject.OnlineStatusChange = ($FullReport.IsOnline -ne $MostRecentReport.IsOnline)
+		    $deltasObject.InvokableChange = ($FullReport.Invokable -ne $MostRecentReport.Invokable)
+		    $deltas.Add("$($client.Hostname)", $deltasObject)
+	}
 	
 	# The target host cannot be invoked. Note this, generate the report, clean old reports, and skip.
 	if ($FullReport.Invokable -eq $False) {
@@ -1024,15 +1024,15 @@ foreach($client in $clientAddresses) {
 			| ForEach-Object { $TrackedFilenamePatternsAsArray += $_ }
 		$FullReport.Add("FilenameTrackersPatterns", $TrackedFilenamePatternsAsArray)
 		<# FullReport is adding this structure:
-		 # "FilenameTrackers" : {
-		 #    UserProfilesCounts    : {  <user1>:{patterns-found}, <user2>:{patterns-found}, ..., <userN>:{patterns-found}  }
-		 #    CustomLocationsCounts : {  <loc1>:{patterns-found}, <loc2>:{patterns-found}, ..., <locN>:{patterns-found}  }
-		 #    ProgramFilesCounts    : {  "ProgramFiles":{patterns-found}  }
-		 #    SystemFilesCounts     : {  "SystemFiles":{patterns-found}  }
-		 # }
-		 #    ... where "patterns-found" uses the pattern from the $TrackedFilenamePatterns variable as the key
-		 #        and the count as the value. There is also a "FILES_[pattern]" key for the actual full filenames found.
-		 #>
+		    # "FilenameTrackers" : {
+		    #    UserProfilesCounts    : {  <user1>:{patterns-found}, <user2>:{patterns-found}, ..., <userN>:{patterns-found}  }
+		    #    CustomLocationsCounts : {  <loc1>:{patterns-found}, <loc2>:{patterns-found}, ..., <locN>:{patterns-found}  }
+		    #    ProgramFilesCounts    : {  "ProgramFiles":{patterns-found}  }
+		    #    SystemFilesCounts     : {  "SystemFiles":{patterns-found}  }
+		    # }
+		    #    ... where "patterns-found" uses the pattern from the $TrackedFilenamePatterns variable as the key
+		    #        and the count as the value. There is also a "FILES_[pattern]" key for the actual full filenames found.
+		    #>
 	}
 	
 	
@@ -1385,34 +1385,37 @@ if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 		$clientDeltas = $deltas.$client
 		
 		<# First thing to do is check that the Invokable or Online statuses have changed, because if they have,
-		 #    the rest of the object won't matter to parse.
-		 #    This is noteworthy because it prevents a host from coming back online after an "outage" and having ALL
-		 #    of its Services, Apps, etc. being registered as "new" in notifications.
-		 # NOTE: A drawback to this is a host coming back online after an outage and having NEW apps on it since the last
-		 #        test while the target was online previously.
-		 #>
+		    #    the rest of the object won't matter to parse.
+		    #    This is noteworthy because it prevents a host from coming back online after an "outage" and having ALL
+		    #    of its Services, Apps, etc. being registered as "new" in notifications.
+		    # NOTE: A drawback to this is a host coming back online after an outage and having NEW apps on it since the last
+		    #        test while the target was online previously.
+		    #>
 		if((($clientDeltas.OnlineStatusChange -eq $True) -Or ($clientDeltas.InvokableChange -eq $True)) -And
 			($NotificationsTriggers.ReachabilityChange -eq $True)) {
 			# Read the newly-generated report back in just for this, to get the previous online & invokable statuses.
 			$TodaysReport = @(Get-ChildItem -Path "$ReportsDirectory" -Filter "Report-$($client.Hostname)*" `
 				| Sort-Object LastWriteTime | Select-Object -Last 1)[0].Name
 			$TodaysReport = Get-Content "$ReportsDirectory\$TodaysReport" | ConvertFrom-Json
-			if($clientDeltas.OnlineStatusChange -eq $True) {
-				$newStatus = -Not $TodaysReport.IsOnline
-				$NOTIFBODY_Rpt += "<span class='SectionHeader'>Client Online</span><br />`n<div class='DiffsSection'>`n"
-				$NOTIFBODY_Rpt += "<span class='$NotificationsHTMLPriorValClass'>$($TodaysReport.IsOnline)</span><br />`n"
-				$NOTIFBODY_Rpt += "<span class='$NotificationsHTMLNewValClass'>$newStatus</span><br />`n"
-			} elseif ($clientDeltas.InvokableChange -eq $True) {
-				$newStatus = -Not $TodaysReport.Invokable
-				$NOTIFBODY_Rpt += "<span class='SectionHeader'>Invokable</span><br />`n<div class='DiffsSection'>`n"
-				$NOTIFBODY_Rpt += "<span class='$NotificationsHTMLPriorValClass'>$($TodaysReport.Invokable)</span><br />`n"
-				$NOTIFBODY_Rpt += "<span class='$NotificationsHTMLNewValClass'>$newStatus</span><br />`n"
-			}
+
+            $NOTIFBODY_Rpt += "<div class='DiffsSection'>`n"
+            if($clientDeltas.OnlineStatusChange -eq $True) {
+                $onlineWas = if($TodaysReport.isOnline) { "offline" } else { "online" }
+                $onlineNow = if($onlineWas -eq "offline") { "online" } else { "offline" }
+                $NOTIFBODY_Rpt += "Client was <span class='$NotificationsHTMLPriorValClass'>$onlineWas</span>"
+                $NOTIFBODY_Rpt += ", and is now <span class='$NotificationsHTMLNewValClass'>$onlineNow</span>."
+            } elseif($clientDeltas.InvokableChange -eq $True) {
+                $invokableWas = if($TodaysReport.Invokable -eq $True) { "uninvokable" } else { "invokable" }
+                $invokableNow = if($invokableWas -eq "uninvokable") { "invokable" } else { "uninvokable" }
+                $NOTIFBODY_Rpt += "Client was <span class='$NotificationsHTMLPriorValClass'>$invokableWas</span>"
+                $NOTIFBODY_Rpt += ", and is now <span class='$NotificationsHTMLNewValClass'>$invokableNow</span>."
+            }
+
 			# One of the two above will always be True, so just close the div tag here.
-			$NOTIFBODY_Rpt += "</div>"
+			$NOTIFBODY_Rpt += "`n</div>"
 			# Move to the next client. This is all we need from the current one.
-			$NOTIFBODY += "`n`n<hr /><h2>$client</h2>`n"
-			$NOTIFBODY += $NOTIFBODY_Rpt
+			$NOTIFBODY_Wrapper += "`n`n<hr /><h2>$client</h2>`n"
+			$NOTIFBODY_Wrapper += $NOTIFBODY_Rpt
 			continue
 		}
 		
