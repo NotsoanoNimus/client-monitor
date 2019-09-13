@@ -339,7 +339,7 @@ Function Send-Email() {
 		
 	if($NotificationsRelayWithCredential -eq $True) {
 		# Relay with auth is on, is a valid SmtpCredential object provided?
-		if($SmtpCredential -eq $null -Or $SmtpCredential -IsNot [PSCredential]) {
+		if($null -eq $SmtpCredential -Or $SmtpCredential -IsNot [PSCredential]) {
 			Write-Host "~~~~ Relay with Authentication is enabled, but no valid Credentials object was detected!"
 			Write-Host "~~~~~~ Please use the -SmtpCredential parameter with a valid Credentials object (using Get-Credential)."
 			Write-Host "~~~~~~ Attempting relay WITHOUT authentication anyway..."
@@ -406,21 +406,21 @@ Function Get-Date-Delta-Hours() {
 # Template function to modularize comparing and generating deltas.
 Function Compare-Deltas() {
 	param(
-		[Parameter(Mandatory=$True)][PSCustomObject]$DeltasObjChanged = @{},
-		[Parameter(Mandatory=$True)][PSCustomObject]$DeltasObjNew = @{},
-		[Parameter(Mandatory=$True)][PSCustomObject]$DeltasObjRemoved = @{},
-		[Parameter(Mandatory=$True)][PSCustomObject]$Todays = @{},
-		[Parameter(Mandatory=$True)][PSCustomObject]$Priors = @{},
-		[Parameter(Mandatory=$True)][PSCustomObject]$TodaysIndex = @{},
-		[Parameter(Mandatory=$True)][PSCustomObject]$PriorsIndex = @{},
-		[Parameter(Mandatory=$True)][System.Array]$CompareProperties = @()
+		[Parameter(Mandatory=$True)][PSCustomObject]$DeltasObjChanged,
+		[Parameter(Mandatory=$True)][PSCustomObject]$DeltasObjNew,
+		[Parameter(Mandatory=$True)][PSCustomObject]$DeltasObjRemoved,
+		[Parameter(Mandatory=$True)][PSCustomObject]$Todays,
+		[Parameter(Mandatory=$True)][PSCustomObject]$Priors,
+		[Parameter(Mandatory=$True)][PSCustomObject]$TodaysIndex,
+		[Parameter(Mandatory=$True)][PSCustomObject]$PriorsIndex,
+		[Parameter(Mandatory=$True)][System.Array]$CompareProperties
 	)
 	foreach($item in $TodaysIndex) {
 		# Get the applications from the hashtable, so it can be compared to the prior report.
 		$todayObject = $Todays.$item
 		$priorObject = $Priors.$item
 		# If the object isn't found in the last report, assume it's a new application.
-		if($priorObject -eq $null -Or $priorObject -eq @{}) { continue }
+		if($null -eq $priorObject -Or @{} -eq $priorObject) { continue }
 		# Compare properties between the two report objects and return it as an array of True/False.
 		$diffs = $CompareProperties | ForEach-Object { $todayObject.$_ -ne $priorObject.$_ }
 		# If a "True" was found, there was a difference detected.
@@ -455,9 +455,9 @@ Function Check-Notification-Filter() {
 	# FilterAge  : Is this for "New", "Removed", or "Changed"?
 	# ItemValue  : The object that is being checked for a filter match.
 	param(
-		[Parameter(Mandatory=$True)][string]$FilterType = "",
-		[Parameter(Mandatory=$True)][string]$FilterAge = "",
-		[Parameter(Mandatory=$True)][PSCustomObject]$ItemValue = @{}
+		[Parameter(Mandatory=$True)][string]$FilterType,
+		[Parameter(Mandatory=$True)][string]$FilterAge,
+		[Parameter(Mandatory=$True)][PSCustomObject]$ItemValue
 	)
 	# Dynamically define the two values for filtering. This is controlled by whether the filtering is white/black-list.
 	$DoFilter = $NotificationsFiltersBlacklist
@@ -493,9 +493,9 @@ Function Check-Notification-Filter() {
     #>
 Function Add-To-Report() {
 	param(
-		[Parameter(Mandatory=$True)][PSCustomObject]$NewObject = @{},
-		[Parameter(Mandatory=$True)][PSCustomObject]$RemovedObject = @{},
-		[Parameter(Mandatory=$True)][PSCustomObject]$ChangedObject = @{},
+		[Parameter(Mandatory=$True)][PSCustomObject]$NewObject,
+		[Parameter(Mandatory=$True)][PSCustomObject]$RemovedObject,
+		[Parameter(Mandatory=$True)][PSCustomObject]$ChangedObject,
 		[Parameter(Mandatory=$True)][string]$ItemName,
 		[Parameter(Mandatory=$True)][string]$ItemType
 	)
@@ -644,85 +644,87 @@ Function Add-To-Report() {
 }
 
 
-# Get each user's startup registry keys by mounting their NTUSER.DAT file onto the system registry.
-### All arguments and external variables must be passed to the function since it's INVOKED on remote systems.
-Function Get-User-StartupApps() {
-    param( [Parameter(Mandatory=$True)][PSCustomObject]$Info )
-    $priorELVL = $ErrorActionPreference; $ErrorActionPreference = 'SilentlyContinue'   # shhhh...
+Function Mount-UserHives() {
+	param( [switch]$Dismount = $False )
+	$priorELVL = $ErrorActionPreference; $ErrorActionPreference = 'SilentlyContinue'   # shhhh...
 
-    # Null/Empty check for the passed parameter.
-    if($Info.Profiles -eq "" -Or $Info.Profiles -eq $null) { return @{} }
-    
-    # If the shadow location doesn't exist, create the directory and force admin-only ACLs on the folder.
-    if(-Not(Test-Path -Path $Info.NTUSERShadowLoc)) {
-        New-Item -Path "$($Info.NTUSERShadowLoc)" -ItemType Directory
-        if($? -eq $False) {
-            Write-Host "~~~~ COULD NOT CREATE A DIRECTORY TO SHADOW USER HIVES. WILL NOT TRACK STARTUP ITEMS."
-            return @{}
-        }
-    }
+	# Get all user profiles, whether loaded or unloaded in the registry.
+    $userProfiles = Invoke-Command @invokeParams -ScriptBlock {
+        (Get-ChildItem -Path $args[0] | Where-Object -Property Name -NotMatch "^Public$").FullName
+    } -ArgumentList $UserProfileBase
+    $Info = @{
+		Profiles = $userProfiles; Domain = $DomainName;
+		NTUSERLoc = $NTUSERLocation; NTUSERShadowLoc = $NTUSERShadowLocation
+	}
 
-    $allProfileData = @{}
-    foreach($profile in ($Info.Profiles | Sort-Object)) {
-        # Could use 'Split-Path' for this instead. Get the username from the folder structure.
-        $username = [Regex]::Match($profile, '\w+\\?$').Value -Replace '\\'
-        # Set up the shadow location for the NTUSER file (in case the hive isn't mounted).
-        $hiveFile = "$($Info.NTUSERShadowLoc)\\NTUSER.DAT_$($username)"
-        # Track manual hive mounting.
-        $hiveLoaded = $False
+	# Null/Empty check for the passed parameter.
+	if($Info.Profiles -eq "" -Or $null -eq $Info.Profiles) { return @() }
 
-        # Doing anything possible to avoid starting CMD.EXE with a UNC path.
-        Push-Location -Path $Info.NTUSERShadowLoc
-        if($? -ne $true) { Push-Location -Path "C:\" }
+	if($Dismount -eq $True) {
+		$mountedHives = Invoke-Command @invokeParams -ScriptBlock {
+			(Get-ChildItem "REGISTRY::HKU" | Where-Object -Property PSChildName -Like "CLI-MON-*").Name `
+				| ForEach-Object { $_ -Replace "HKEY_USERS", "HKU" }
+		}
+		$mountedHives | ForEach-Object {
+			Invoke-Command @invokeParams -ArgumentList $_ -ScriptBlock {
+				reg unload $args[0] 2>&1 | Out-Null
+			}
+		}
+		return @()
+	} else {
+		$returnedHives = Invoke-Command @invokeParams -ArgumentList $Info -ScriptBlock {
+			param ( [PSCustomObject]$Info )
+			$mountedHives = @()
+			# If the shadow location doesn't exist, create the directory and force admin-only ACLs on the folder.
+			if(-Not(Test-Path -Path $Info.NTUSERShadowLoc)) {
+				New-Item -Path "$($Info.NTUSERShadowLoc)" -ItemType Directory
+				if($? -eq $False) {
+					Write-Host "~~~~ COULD NOT CREATE A DIRECTORY TO SHADOW USER HIVES. WILL NOT TRACK PER-USER ITEMS."
+					return @()
+				}
+			}
+			
+			foreach($profile in ($Info.Profiles | Sort-Object)) {
+				# Get the username from the folder structure.
+				$username = Split-Path -Path "$($profile)" -Leaf
+				# Set up the shadow location for the NTUSER file (in case the hive isn't mounted).
+				$hiveFile = "$($Info.NTUSERShadowLoc)\\NTUSER.DAT_$($username)"
 
-        # If the NTUSER.DAT registry file can't be found then continue to the next profile.
-        Copy-Item -Path "$($profile)\\$($Info.NTUSERLoc)\\NTUSER.DAT" -Destination $hiveFile -Force
+				# Doing anything possible to avoid starting CMD.EXE with a UNC path.
+				Push-Location -Path $Info.NTUSERShadowLoc
+				if($? -ne $True) { Push-Location -Path "C:\" }
 
-        # If there was en error copying the file, that means it's open (and locked). Read the currently-loaded hive instead.
-        if($? -eq $False) {
-            # Get the Security Identifier for the mounted profile.
-            $userObject = New-Object System.Security.Principal.NTAccount($Info.Domain, $username)
-            $sid = $userObject.Translate([System.Security.Principal.SecurityIdentifier])
+				# If the NTUSER.DAT registry file can't be found then continue to the next profile.
+				Copy-Item -Path "$($profile)\\$($Info.NTUSERLoc)\\NTUSER.DAT" -Destination $hiveFile -Force
+				# If there was en error copying the file ($False return), that means it's open (and locked). Skip.
+				if($? -eq $True) {
+					if(-Not(Test-Path -Path $hiveFile)) {
+						Write-Host "~~~~ Could not find or access the shadow hive file, despite it being copied successfully. Skipping..."
+						continue
+					}
+					# Quickly set the NTUSER ACLs to its original content.
+					Get-Acl "$($profile)\\$($Info.NTUSERLoc)\\NTUSER.DAT" | Set-Acl $hiveFile
+					# Attempt to load the NTUSER file into the registry.
+					reg load "HKU\CLI-MON-$($username)" `"$hiveFile`" | Out-Null
+					# Index the mounted hive.
+					if($? -eq $True) { $mountedHives += "$($Info.Domain)\$($username)" }
+				} else {
+					# Get the Security Identifier for the mounted profile.
+					$userObject = New-Object System.Security.Principal.NTAccount($Info.Domain, $username)
+					$sid = $userObject.Translate([System.Security.Principal.SecurityIdentifier])
+					# Add it to the section.
+					$mountedHives += "$sid"
+				}
+					
+				# Return to the original script location.
+				Pop-Location
+			}
+			return $mountedHives
+		}
 
-            # Try to find the key/value pairs for startup entries.
-            $startApps = Get-ItemProperty "REGISTRY::HKEY_USERS\$($sid.Value)\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" `
-                | Get-Member -Type NoteProperty | Where-Object -Property Name -NotLike PS*
-            $startApps += Get-ItemProperty "REGISTRY::HKEY_USERS\$($sid.Value)\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" `
-                | Get-Member -Type NoteProperty | Where-Object -Property Name -NotLike PS*
-
-            # Add the data to the return variable.
-            $allProfileData.Add($username, $startApps)
-        } else {
-            if(-Not(Test-Path -Path $hiveFile)) { continue }
-            
-            # Quickly set the NTUSER ACLs to its original content.
-            Get-Acl "$($profile)\\$($Info.NTUSERLoc)\\NTUSER.DAT" | Set-Acl $hiveFile
-
-            # Attempt to load the NTUSER file into the registry.
-            reg load HKU\CLIENT-MONITOR `"$($hiveFile)`"
-            $hiveLoaded = $True
-
-            # Try to find the key/value pairs for startup entries.
-            $startApps = Get-ItemProperty "REGISTRY::HKEY_USERS\CLIENT-MONITOR\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" `
-                | Get-Member -Type NoteProperty | Where-Object -Property Name -NotLike PS*
-            $startApps += Get-ItemProperty "REGISTRY::HKEY_USERS\CLIENT-MONITOR\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" `
-                | Get-Member -Type NoteProperty | Where-Object -Property Name -NotLike PS*
-
-            # Add the data to the return variable.
-            $allProfileData.Add($username, $startApps)
-            # If the hive is mounted, attempt to unmount it.
-            if($hiveLoaded -eq $True) { reg unload HKU\CLIENT-MONITOR }
-            # Delete the temporary files created by mounting and unmounting the hive file.
-            Get-ChildItem -Force -Path "$($Info.NTUSERShadowLoc)" `
-                | Where-Object -Property Name -Like "NTUSER.DAT_$($username)*" | Remove-Item -Force
-        }
-        # Return to the original script location.
-        Pop-Location
-    }
-
-    # Turn error reporting back on and return the data.
-    $ErrorActionPreference = $priorELVL
-    return $allProfileData
+		$ErrorActionPreference = $priorELVL
+		return $returnedHives
+	}
 }
 
 
@@ -888,6 +890,9 @@ foreach($client in $clientAddresses) {
 	    #   PSChildName is the registry key's name. So if there is not any other info, at least get the key name.
 	    #>
 	 
+	Write-Host "-- Mounting user registry hives."
+	$mountedUserHives = Mount-UserHives
+	$mountedUserHives | ForEach-Object { Write-Host "---- Mounted Hive for User: $_ " }
 	Write-Host "-- Collecting information about the target machine and building a report."
 	
 	####### TODO: PIECES OF THIS SECTION CAN BE MODULARIZED INTO A GENERIC FUNCTION #######
@@ -911,7 +916,7 @@ foreach($client in $clientAddresses) {
 				# Get the actual contents of all the directories and send the full path + filename back out.
 				$paths | ForEach-Object {
 					Write-Host "-------- Checking Path: $_"
-					Get-ChildItem -Path $_ -Recurse | Sort-Object LastWriteTime | Select-Object FullName
+					Get-ChildItem -Path $_ -Recurse | Sort-Object CreationTime | Select-Object FullName
 				}
 			} -ArgumentList (,$UserProfiles)
 			# Iterate through the profile list.
@@ -993,7 +998,7 @@ foreach($client in $clientAddresses) {
 				# Get the contents of the custom directory. If it doesn't exist, return a null.
 				$CustomDirContents = Invoke-Command @invokeParams -ScriptBlock {
 					if(-Not(Test-Path $args[1])) { return $null }
-					Get-ChildItem -Path $args[1] -Recurse:$args[0] | Sort-Object LastWriteTime
+					Get-ChildItem -Path $args[1] -Recurse:$args[0] | Sort-Object CreationTime
 				} -ArgumentList $TrackedFilenameLocationsCustom.$customlocation,$customlocation
 				$PerLocationCount = @{}
 				foreach($pattern in $TrackedFilenamePatterns.Keys) {
@@ -1116,27 +1121,46 @@ foreach($client in $clientAddresses) {
     # Define the two objects to insert into the main report hashtable.
 	$reportStartupApps = @{}; $startupAppsIndex = @()
 
-    # Get per-user startup applications from all user profiles, whether loaded or unloaded in the registry.
-    $userProfiles = Invoke-Command @invokeParams -ScriptBlock {
-        (Get-ChildItem -Path $args[0] | Where-Object -Property Name -NotMatch "^Public$").FullName
-    } -ArgumentList $UserProfileBase
-    $GetAppsInfo = @{
-        Profiles = $userProfiles; Domain = $DomainName; NTUSERLoc = $NTUSERLocation; NTUSERShadowLoc = $NTUSERShadowLocation
-    }
-    $ErrorActionPreference = $priorELVL
-    $perProfileApps = Invoke-Command @invokeParams -ScriptBlock ${function:Get-User-StartupApps} -ArgumentList $GetAppsInfo
+	$perProfileApps = Invoke-Command @invokeParams -ScriptBlock {
+		param( [System.Array]$hives )
+		if($hives.Count -le 0) { return @{} }
+		$priorELVL = $ErrorActionPreference; $ErrorActionPreference = 'SilentlyContinue'   # shhhh...
+		$allProfilesStartups = @{}
+		foreach($hive in $hives) {
+			if($hive -Match '^S-\d+-\d+-\d+-') {
+				$sidObj = New-Object System.Security.Principal.SecurityIdentifier("$hive")
+				$username = ($sidObj.Translate([System.Security.Principal.NTAccount])).Value
+				$regLocation = $hive
+			} else {
+				$username = $hive
+				$regLocation = $hive -Replace "^$($DomainName)\\","CLI-MON-"
+			}
+			
+			# Try to find the key/value pairs for startup entries.
+			$startApps = Get-ItemProperty "REGISTRY::HKEY_USERS\$($regLocation)\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" `
+				| Get-Member -Type NoteProperty | Where-Object -Property Name -NotLike PS*
+			
+			# Add the data to the return variable.
+			$allProfilesStartups.Add($username, $startApps)
+		}
+		# Return all items.
+		$ErrorActionPreference = $priorELVL
+		return $allProfilesStartups
+	} -ArgumentList (,$mountedUserHives)
+
     foreach($user in ($perProfileApps.Keys | Sort-Object)) {
         foreach($item in $perProfileApps.$user) {
-            if($item -eq $null) { continue }
-            $keyname = "$($item.Name)_$($DomainName)\$($user)"
+            if($null -eq $item) { continue }
+            $keyname = "$($item.Name)_$($user)"
             $addedInformation = [ordered]@{}
             foreach($value in $TrackedValues.StartupApps) {
                 if($value -eq "Command") {
                     $addedInformation.Add($value, "$($item.Definition -Replace 'string ')")
                 } elseif($value -eq "Location") {
-                    $addedInformation.Add($value, "HKEY_USERS\$($user)")
+					$userNoDomain = $user -Replace "^$($DomainName)\\"
+                    $addedInformation.Add($value, "HKEY_USERS\$($userNoDomain)")
                 } elseif($value -eq "User") {
-                    $addedInformation.Add($value, "$($DomainName)\$($user)")
+                    $addedInformation.Add($value, "$($user)")
                 } else { $addedInformation.Add($value, "") }
             }
             $reportStartupApps.Add($keyname, $addedInformation)
@@ -1223,7 +1247,11 @@ foreach($client in $clientAddresses) {
 	Write-Host "---- Finalizing generated report."
 	Write-Report($FullReport)
 	
-	
+
+	# Dismount the user hives.
+	Write-Host "-- Unmounting user hives."
+	Mount-UserHives -Dismount
+
 	
 	#####################################################################
 	# COMPARISON SECTION.
@@ -1400,22 +1428,27 @@ if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 
             $NOTIFBODY_Rpt += "<div class='DiffsSection'>`n"
             if($clientDeltas.OnlineStatusChange -eq $True) {
-                $onlineWas = if($TodaysReport.isOnline) { "offline" } else { "online" }
-                $onlineNow = if($onlineWas -eq "offline") { "online" } else { "offline" }
+                $onlineWas = if($TodaysReport.isOnline) { "online" } else { "offline" }
+                $onlineNow = if($onlineWas -eq "online") { "offline" } else { "online" }
                 $NOTIFBODY_Rpt += "Client was <span class='$NotificationsHTMLPriorValClass'>$onlineWas</span>"
                 $NOTIFBODY_Rpt += ", and is now <span class='$NotificationsHTMLNewValClass'>$onlineNow</span>."
             } elseif($clientDeltas.InvokableChange -eq $True) {
-                $invokableWas = if($TodaysReport.Invokable -eq $True) { "uninvokable" } else { "invokable" }
-                $invokableNow = if($invokableWas -eq "uninvokable") { "invokable" } else { "uninvokable" }
+                $invokableWas = if($TodaysReport.Invokable -eq $True) { "invokable" } else { "uninvokable" }
+                $invokableNow = if($invokableWas -eq "invokable") { "uninvokable" } else { "invokable" }
                 $NOTIFBODY_Rpt += "Client was <span class='$NotificationsHTMLPriorValClass'>$invokableWas</span>"
                 $NOTIFBODY_Rpt += ", and is now <span class='$NotificationsHTMLNewValClass'>$invokableNow</span>."
             }
 
 			# One of the two above will always be True, so just close the div tag here.
 			$NOTIFBODY_Rpt += "`n</div>"
+			# Set the background color of the section.
+			$bgColor = if($FlipColors -eq $True) {"FFFFFF"} else {"EDEDED"}
 			# Move to the next client. This is all we need from the current one.
-			$NOTIFBODY_Wrapper += "`n`n<hr /><h2>$client</h2>`n"
-			$NOTIFBODY_Wrapper += $NOTIFBODY_Rpt
+			$NOTIFBODY_Wrapper += "`n`n<hr /><table style='border-collapse:collapse;' width='100%'><tr>"
+			$NOTIFBODY_Wrapper += "<td bgColor='#$($bgColor)' width='100%' style='border:none;background-color:#$($bgColor);'>"
+			$NOTIFBODY_Wrapper += "<h2>$client</h2>`n" + $NOTIFBODY_Rpt + "</td></tr></table>`n"
+			# Rotate colors.
+			$FlipColors = -Not $FlipColors
 			continue
 		}
 		
