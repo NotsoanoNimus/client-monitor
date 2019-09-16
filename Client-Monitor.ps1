@@ -650,7 +650,7 @@ Function Mount-UserHives() {
 
 	# Get all user profiles, whether loaded or unloaded in the registry.
     $userProfiles = Invoke-Command @invokeParams -ScriptBlock {
-        (Get-ChildItem -Path $args[0] | Where-Object -Property Name -NotMatch "^Public$").FullName
+        (Get-ChildItem -Path $args[0] | Where-Object -Property Name -NotMatch '^Public$').FullName
     } -ArgumentList $UserProfileBase
     $Info = @{
 		Profiles = $userProfiles; Domain = $DomainName;
@@ -661,15 +661,22 @@ Function Mount-UserHives() {
 	if($Info.Profiles -eq "" -Or $null -eq $Info.Profiles) { return @() }
 
 	if($Dismount -eq $True) {
+		# Attempt to get each node in the registry that's mounted under "CLI-MON-[username]"
 		$mountedHives = Invoke-Command @invokeParams -ScriptBlock {
 			(Get-ChildItem "REGISTRY::HKU" | Where-Object -Property PSChildName -Like "CLI-MON-*").Name `
 				| ForEach-Object { $_ -Replace "HKEY_USERS", "HKU" }
 		}
+		# Attempt to unload each registry node.
 		$mountedHives | ForEach-Object {
+			Write-Host "---- Node: $_   [" -NoNewline
 			Invoke-Command @invokeParams -ArgumentList $_ -ScriptBlock {
 				reg unload $args[0] 2>&1 | Out-Null
+				if($? -eq $True) { Write-Host "SUCCESS" -ForegroundColor Green -NoNewline }
+				else { Write-Host "FAILURE" -ForegroundColor Red -NoNewline }
+				Write-Host "]"
 			}
 		}
+		# Exit the function.
 		return @()
 	} else {
 		$returnedHives = Invoke-Command @invokeParams -ArgumentList $Info -ScriptBlock {
@@ -683,16 +690,16 @@ Function Mount-UserHives() {
 					return @()
 				}
 			}
+
+			# Doing anything possible to avoid starting CMD.EXE with a UNC path.
+			Push-Location -Path $Info.NTUSERShadowLoc
+			if($? -ne $True) { Push-Location -Path "C:\" }
 			
 			foreach($profile in ($Info.Profiles | Sort-Object)) {
 				# Get the username from the folder structure.
 				$username = Split-Path -Path "$($profile)" -Leaf
 				# Set up the shadow location for the NTUSER file (in case the hive isn't mounted).
 				$hiveFile = "$($Info.NTUSERShadowLoc)\\NTUSER.DAT_$($username)"
-
-				# Doing anything possible to avoid starting CMD.EXE with a UNC path.
-				Push-Location -Path $Info.NTUSERShadowLoc
-				if($? -ne $True) { Push-Location -Path "C:\" }
 
 				# If the NTUSER.DAT registry file can't be found then continue to the next profile.
 				Copy-Item -Path "$($profile)\\$($Info.NTUSERLoc)\\NTUSER.DAT" -Destination $hiveFile -Force
@@ -709,22 +716,71 @@ Function Mount-UserHives() {
 					# Index the mounted hive.
 					if($? -eq $True) { $mountedHives += "$($Info.Domain)\$($username)" }
 				} else {
-					# Get the Security Identifier for the mounted profile.
-					$userObject = New-Object System.Security.Principal.NTAccount($Info.Domain, $username)
-					$sid = $userObject.Translate([System.Security.Principal.SecurityIdentifier])
-					# Add it to the section.
-					$mountedHives += "$sid"
+					# See if the user's profile name is already mounted under "CLI-MON-[username]".
+					$profilesMounted = (Get-ChildItem "REGISTRY::HKU" `
+						| Where-Object -Property PSChildName -Like "CLI-MON-*").PSChildName
+					if($profilesMounted.Contains("CLI-MON-$username")) {
+						$mountedHives += "$($Info.Domain)\$username"
+					} else {
+						# Get the Security Identifier for the mounted profile.
+						$userObject = New-Object System.Security.Principal.NTAccount($Info.Domain, $username)
+						$sid = $userObject.Translate([System.Security.Principal.SecurityIdentifier])
+						# Add it to the section.
+						$mountedHives += "$sid"
+					}
 				}
-					
-				# Return to the original script location.
-				Pop-Location
 			}
+			# Return to the original script location.
+			Pop-Location
 			return $mountedHives
 		}
-
 		$ErrorActionPreference = $priorELVL
 		return $returnedHives
 	}
+}
+
+
+Function Get-UserHivesInformation() {
+	param(
+		[System.Array]$hives,
+		[System.Array]$registryTargets,
+		[string]$DomainName,
+		[bool]$SepMembers = $False
+	)
+	# Param check...
+	if($hives.Count -le 0) { return @{} }
+	$priorELVL = $ErrorActionPreference; $ErrorActionPreference = 'SilentlyContinue'   # shhhh...
+	$allProfilesInfo = @{}
+	foreach($hive in $hives) {
+		# Check whether or not the given hive name is a SID.
+		if($hive -Match '^S-\d+-\d+-\d+-') {
+			# If so, translate the SID to a username, but continue using the SID for fetching data.
+			$sidObj = New-Object System.Security.Principal.SecurityIdentifier("$hive")
+			$username = ($sidObj.Translate([System.Security.Principal.NTAccount])).Value
+			$regLocation = $hive
+		} else {
+			# Otherwise, set the username directly and use CLI-MON-[username] as the target.
+			$username = $hive
+			$regLocation = $hive -Replace "^$($DomainName)\\","CLI-MON-"
+		}
+		# Iterate through the locations fed to the function.
+		foreach($target in $registryTargets) {
+			# Dynamically replace [TARGET_USER] with the user's ID or mounted name.
+			$loc = $target -Replace '\[TARGET_USER\]', "$regLocation"
+			# Try to find the key/value pairs for the given location.
+			### SepMembers will determine if the registry keys themselves return a value,
+			###  or if each is an individual object (and the PS* keys are desired).
+			if($SepMembers -eq $True) {
+				$registryValue = Get-ItemProperty "$loc" | Get-Member -Type NoteProperty `
+				| Where-Object -Property Name -NotLike "PS*"
+			} else { $registryValue = Get-ItemProperty "$loc" }
+			# Add the information to the return variable.
+			$allProfilesInfo.Add($username, $registryValue)
+		}
+	}
+	# Return all items.
+	$ErrorActionPreference = $priorELVL
+	return $allProfilesInfo
 }
 
 
@@ -750,7 +806,7 @@ if($clientsList -eq "use-AD-list") {
 		$hostname = $line.Name
 		$address = Parse-Hostnames($hostname)
 		# Sanity check, ensuring it's not a duplicate and that it exists.
-		if($address -eq $null -Or $clientAddresses.Contains($address)) {
+		if($null -eq $address -Or $clientAddresses.Contains($address)) {
 			Write-Host "~~~~ Workstation $hostname did not return a valid address. Excluding from report." -ForegroundColor Red
 			continue
 		}
@@ -871,6 +927,8 @@ foreach($client in $clientAddresses) {
 	if((($FullReport.Invokable -ne $MostRecentReport.Invokable) -Or
 		($FullReport.IsOnline -ne $MostRecentReport.IsOnline)) -And
 		(-Not($LastReportMade.Length -le 0))) {
+			# This section lets the notification generation portion of the script know that
+			### something to do with client reachability has changed.
 		    $deltasObject.OnlineStatusChange = ($FullReport.IsOnline -ne $MostRecentReport.IsOnline)
 		    $deltasObject.InvokableChange = ($FullReport.Invokable -ne $MostRecentReport.Invokable)
 		    $deltas.Add("$($client.Hostname)", $deltasObject)
@@ -878,21 +936,25 @@ foreach($client in $clientAddresses) {
 	
 	# The target host cannot be invoked. Note this, generate the report, clean old reports, and skip.
 	if ($FullReport.Invokable -eq $False) {
-		Write-Host "**** WinRM is not active on the target."
-		Write-Report($FullReport)
+		Write-Host "**** WinRM is not active on the target, or the target is unreachable."
+		Write-Host "****  Pushing the most recent report (if it exists) forward."
+		# Set the most recent report's status variables accordingly, but preserve everything else.
+		$MostRecentReport.Invokable = $False
+		$MostRecentReport.IsOnline = $FullReport.IsOnline
+		# Write the "new" report as the slightly-modified old one.
+		Write-Report($MostRecentReport)
+		# Clean up and move on.
 		Clean-Reports "$($client.Hostname)"
 		continue
 	}
 	
-	
-	<# Harvest an object full of data from the client.
-	    #   PSParentPath is using the registry key where we've found the entry, so it shouldn't ever be null.
-	    #   PSChildName is the registry key's name. So if there is not any other info, at least get the key name.
-	    #>
-	 
+	# Start mounting the registry hives for each user, and track which hives are already mounted. 
 	Write-Host "-- Mounting user registry hives."
 	$mountedUserHives = Mount-UserHives
-	$mountedUserHives | ForEach-Object { Write-Host "---- Mounted Hive for User: $_ " }
+	$mountedUserHives | ForEach-Object {
+		Write-Host "---- Mounted Hive: " -NoNewLine
+		Write-Host "$_ " -ForegroundColor Yellow
+	}
 	Write-Host "-- Collecting information about the target machine and building a report."
 	
 	####### TODO: PIECES OF THIS SECTION CAN BE MODULARIZED INTO A GENERIC FUNCTION #######
@@ -1043,34 +1105,43 @@ foreach($client in $clientAddresses) {
 	
 	# -----------------------------------------
 	# Collect installed applications at multiple layers.
-    ### TODO: Discard the HKCU check and institute another hive check.
 	Write-Host "---- Gathering installed applications..."
-	$installedAppsObject = Invoke-Command @invokeParams -ScriptBlock {
-		$installedApps = @()
-		# Local Machine applications.
-		$installedApps += Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*
-		# Current User applications.
-		$installedApps += Get-ItemProperty HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*
-		# 64-to-32-bit applications.
-		$installedApps += Get-ItemProperty HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*
-		# Send back the aggregated object.
-		return $installedApps
+	$installedAppsObject = @{}
+	# Find system-wide installations from the HKLM.
+	$machineApplications = Invoke-Command @invokeParams -ScriptBlock {
+		Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*
 	}
+	$installedAppsObject.Add("HKLM", $machineApplications)
+	# Find the 64-to-32-bit applications in the registry.
+	$6432Nodes = Invoke-Command @invokeParams -ScriptBlock {
+		Get-ItemProperty HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*
+	}
+	$installedAppsObject.Add("6432Node", $6432Nodes)
+
+	# Use the targets below to get each user's information from the mounted registry nodes.
+	$appTargets = @(
+		"REGISTRY::HKEY_USERS\[TARGET_USER]\Software\Microsoft\Windows\CurrentVersion\Uninstall\*"
+	)
+	$perProfileApps = Invoke-Command @invokeParams -ScriptBlock ${function:Get-UserHivesInformation} `
+		-ArgumentList $mountedUserHives,$appTargets,$DomainName,$False
+
+	# Append the per-profile items from the registry onto the output object.
+	$installedAppsObject += $perProfileApps
+
 	# Define the two objects to insert into the main report hashtable.
 	$reportInstalledApps = @{}; $installedAppsIndex = @()
-	foreach($app in $installedAppsObject) {
-		# Append a suffix onto each index to ensure uniqueness, based on which part of the registry the key lives in.
-		$keysuffix = "_"
-		if($app.PSPath -Match 'Wow6432Node') { $keysuffix += '6432Node' }
-		elseif($app.PSPath -Match '::HKEY_CURRENT') { $keysuffix += 'HKCU' }
-		elseif($app.PSPath -Match '::HKEY_LOCAL') { $keysuffix += 'HKLM' }
-		else { $keysuffix += '?' }
-		$keyname = "$($app.PSChildName)" + $keysuffix
-		# Add the keyname onto the index.
-		$installedAppsIndex += $keyname
-		# Create the key in the hashtable.
-		$reportInstalledApps.Add($keyname, ($installedAppsObject | Where-Object -Property PSPath -eq "$($app.PSPath)" `
-			| Select-Object $TrackedValues.InstalledApps))
+	foreach($appKey in $installedAppsObject.Keys) {
+	#foreach($appKey in (($installedAppsObject | Get-Member -Type NoteProperty).Name | Sort-Object)) {
+		foreach($app in $installedAppsObject.$appKey) {
+			if($null -eq $app) { continue }
+			$keyname = "$($app.PSChildName)_$appKey"
+			# Add the keyname onto the index.
+			$installedAppsIndex += $keyname
+			# Create the key in the hashtable.
+			$reportInstalledApps.Add($keyname, `
+				($installedAppsObject.$appKey | Where-Object -Property PSPath -eq "$($app.PSPath)" `
+				| Select-Object $TrackedValues.InstalledApps))
+		}
 	}
 	# Add the items to the new report.
 	$FullReport.Add("InstalledAppsIndex", $installedAppsIndex)
@@ -1121,35 +1192,16 @@ foreach($client in $clientAddresses) {
     # Define the two objects to insert into the main report hashtable.
 	$reportStartupApps = @{}; $startupAppsIndex = @()
 
-	$perProfileApps = Invoke-Command @invokeParams -ScriptBlock {
-		param( [System.Array]$hives )
-		if($hives.Count -le 0) { return @{} }
-		$priorELVL = $ErrorActionPreference; $ErrorActionPreference = 'SilentlyContinue'   # shhhh...
-		$allProfilesStartups = @{}
-		foreach($hive in $hives) {
-			if($hive -Match '^S-\d+-\d+-\d+-') {
-				$sidObj = New-Object System.Security.Principal.SecurityIdentifier("$hive")
-				$username = ($sidObj.Translate([System.Security.Principal.NTAccount])).Value
-				$regLocation = $hive
-			} else {
-				$username = $hive
-				$regLocation = $hive -Replace "^$($DomainName)\\","CLI-MON-"
-			}
-			
-			# Try to find the key/value pairs for startup entries.
-			$startApps = Get-ItemProperty "REGISTRY::HKEY_USERS\$($regLocation)\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" `
-				| Get-Member -Type NoteProperty | Where-Object -Property Name -NotLike PS*
-			
-			# Add the data to the return variable.
-			$allProfilesStartups.Add($username, $startApps)
-		}
-		# Return all items.
-		$ErrorActionPreference = $priorELVL
-		return $allProfilesStartups
-	} -ArgumentList (,$mountedUserHives)
+	# Use the targets below to get each user's information from the mounted registry nodes.
+	$startupTargets = @(
+		"REGISTRY::HKEY_USERS\[TARGET_USER]\Software\Microsoft\Windows\CurrentVersion\Run\"
+	)
+	$perProfileStartupApps = Invoke-Command @invokeParams -ScriptBlock ${function:Get-UserHivesInformation} `
+		-ArgumentList $mountedUserHives,$startupTargets,$DomainName,$True
 
-    foreach($user in ($perProfileApps.Keys | Sort-Object)) {
-        foreach($item in $perProfileApps.$user) {
+	# For every user in the mounted registry point, parse the returned information.
+	foreach($user in ($perProfileStartupApps.Keys | Sort-Object)) {
+        foreach($item in $perProfileStartupApps.$user) {
             if($null -eq $item) { continue }
             $keyname = "$($item.Name)_$($user)"
             $addedInformation = [ordered]@{}
@@ -1171,7 +1223,8 @@ foreach($client in $clientAddresses) {
 	# Get Startup apps using the below command. This will capture the current startup commands registered
     ### on the Local Machine and Current User. The "where" clause specifies that we're searching only for Local Machine keys.
 	$w32StartupCmd = Invoke-Command @invokeParams -ScriptBlock {
-        Get-CimInstance Win32_StartupCommand | Where-Object -Property User -Match "^(Public|NT\sAUTHORITY\\.+)$"
+		Get-CimInstance Win32_StartupCommand `
+			| Where-Object -Property User -Match "^(Public|NT\sAUTHORITY\\.+)$"
     }
 	foreach($startupapp in $w32StartupCmd) {
 		$keyname = "$($startupapp.Name)_$($startupapp.User)"
@@ -1249,7 +1302,7 @@ foreach($client in $clientAddresses) {
 	
 
 	# Dismount the user hives.
-	Write-Host "-- Unmounting user hives."
+	Write-Host "-- Unmounting user hives for users that are not logged on (SIDs)."
 	Mount-UserHives -Dismount
 
 	
