@@ -124,6 +124,8 @@ Each tweak will include its own description (if its variable name isn't descript
   + **$NotificationsBodyOnNoChange** -- Body template for notifications informing of no changes.
 + **$NotificationsAsHTML** -- Whether or not to send emails with HTML formatting. If set to `$False` email notifications will be sent in plaintext.
   + The "class" tweaks in this section are really not important unless the name is clashing with another CSS class you write or use in the notifications.
++ **$NotificationsHTMLBackgroundColors** -- The two hexadecimal colors to alternate between when switching between clients in the _HTML_ notification.
+  + The "$True" boolean value field is **always** _used for the first client_ in the generated notification.
 + **$NotificationsStripHeaders** -- Whether or not to strip out redundant table headers in each category. _Turned off_ by default.
   + **$NotificationsHTMLWrapper** -- The HTML notification wrapper format, including all content between the `<HTML>` tags. The `[[BODYTEXT]]` item here is later replaced with the generated body of the notification.
 + **$NotificationsChangesBodyHeader** -- The header/upper section used in notifications that _will_ have some changes noted for clients.

@@ -108,6 +108,11 @@ Either the items that <i>did</i> change were filtered, or nothing has changed at
 
 # By default, all notifications are sent as HTML.
 $NotificationsAsHTML = $True
+# The two colors to alternate between when switching clients in the HTML notification.
+### The TRUE boolean value is always used first.
+$NotificationsHTMLBackgroundColors = @{
+	$True = "FFFFFF"; $False = "EDEDED"
+}
 # "Advanced" settings for the HTML notifications. These are just class names for certain objects used in the HTML notifs.
 #    They're important to define, less important to change.
 $NotificationsHTMLNewValClass = 'NewText'
@@ -694,13 +699,12 @@ Function Mount-UserHives() {
 			# Doing anything possible to avoid starting CMD.EXE with a UNC path.
 			Push-Location -Path $Info.NTUSERShadowLoc
 			if($? -ne $True) { Push-Location -Path "C:\" }
-			
+			# Go through each profile, shadow the NTUSER hive, and mount it onto the registry.
 			foreach($profile in ($Info.Profiles | Sort-Object)) {
 				# Get the username from the folder structure.
 				$username = Split-Path -Path "$($profile)" -Leaf
 				# Set up the shadow location for the NTUSER file (in case the hive isn't mounted).
 				$hiveFile = "$($Info.NTUSERShadowLoc)\\NTUSER.DAT_$($username)"
-
 				# If the NTUSER.DAT registry file can't be found then continue to the next profile.
 				Copy-Item -Path "$($profile)\\$($Info.NTUSERLoc)\\NTUSER.DAT" -Destination $hiveFile -Force
 				# If there was en error copying the file ($False return), that means it's open (and locked). Skip.
@@ -719,8 +723,9 @@ Function Mount-UserHives() {
 					# See if the user's profile name is already mounted under "CLI-MON-[username]".
 					$profilesMounted = (Get-ChildItem "REGISTRY::HKU" `
 						| Where-Object -Property PSChildName -Like "CLI-MON-*").PSChildName
-					if($profilesMounted.Contains("CLI-MON-$username")) {
-						$mountedHives += "$($Info.Domain)\$username"
+
+					if(-Not($null -eq $profilesMounted) -And $profilesMounted.Contains("CLI-MON-$username")) {
+						$mountedHives += "$($Info.Domain)\$($username)"
 					} else {
 						# Get the Security Identifier for the mounted profile.
 						$userObject = New-Object System.Security.Principal.NTAccount($Info.Domain, $username)
@@ -930,8 +935,9 @@ foreach($client in $clientAddresses) {
 			# This section lets the notification generation portion of the script know that
 			### something to do with client reachability has changed.
 		    $deltasObject.OnlineStatusChange = ($FullReport.IsOnline -ne $MostRecentReport.IsOnline)
-		    $deltasObject.InvokableChange = ($FullReport.Invokable -ne $MostRecentReport.Invokable)
-		    $deltas.Add("$($client.Hostname)", $deltasObject)
+			$deltasObject.InvokableChange = ($FullReport.Invokable -ne $MostRecentReport.Invokable)
+			# If the host isn't invokable, track the deltas here, because below will cause a forced continue.
+		    if($FullReport.Invokable -eq $False) { $deltas.Add("$($client.Hostname)", $deltasObject) }
 	}
 	
 	# The target host cannot be invoked. Note this, generate the report, clean old reports, and skip.
@@ -1117,17 +1123,14 @@ foreach($client in $clientAddresses) {
 		Get-ItemProperty HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*
 	}
 	$installedAppsObject.Add("6432Node", $6432Nodes)
-
 	# Use the targets below to get each user's information from the mounted registry nodes.
 	$appTargets = @(
 		"REGISTRY::HKEY_USERS\[TARGET_USER]\Software\Microsoft\Windows\CurrentVersion\Uninstall\*"
 	)
 	$perProfileApps = Invoke-Command @invokeParams -ScriptBlock ${function:Get-UserHivesInformation} `
 		-ArgumentList $mountedUserHives,$appTargets,$DomainName,$False
-
 	# Append the per-profile items from the registry onto the output object.
 	$installedAppsObject += $perProfileApps
-
 	# Define the two objects to insert into the main report hashtable.
 	$reportInstalledApps = @{}; $installedAppsIndex = @()
 	foreach($appKey in $installedAppsObject.Keys) {
@@ -1302,7 +1305,7 @@ foreach($client in $clientAddresses) {
 	
 
 	# Dismount the user hives.
-	Write-Host "-- Unmounting user hives for users that are not logged on (SIDs)."
+	Write-Host "-- Unmounting user hives for users that are not logged on."
 	Mount-UserHives -Dismount
 
 	
@@ -1464,7 +1467,7 @@ if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 		$NOTIFBODY_Rpt = ""
 		# Set the $clientDeltas object equal to the per-client changes so they can be iterated.
 		$clientDeltas = $deltas.$client
-		
+
 		<# First thing to do is check that the Invokable or Online statuses have changed, because if they have,
 		    #    the rest of the object won't matter to parse.
 		    #    This is noteworthy because it prevents a host from coming back online after an "outage" and having ALL
@@ -1478,31 +1481,31 @@ if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 			$TodaysReport = @(Get-ChildItem -Path "$ReportsDirectory" -Filter "Report-$($client.Hostname)*" `
 				| Sort-Object LastWriteTime | Select-Object -Last 1)[0].Name
 			$TodaysReport = Get-Content "$ReportsDirectory\$TodaysReport" | ConvertFrom-Json
-
-            $NOTIFBODY_Rpt += "<div class='DiffsSection'>`n"
+			# Build the section for the report, to show the online/offline differences.
             if($clientDeltas.OnlineStatusChange -eq $True) {
-                $onlineWas = if($TodaysReport.isOnline) { "online" } else { "offline" }
-                $onlineNow = if($onlineWas -eq "online") { "offline" } else { "online" }
-                $NOTIFBODY_Rpt += "Client was <span class='$NotificationsHTMLPriorValClass'>$onlineWas</span>"
-                $NOTIFBODY_Rpt += ", and is now <span class='$NotificationsHTMLNewValClass'>$onlineNow</span>."
+				# The below value is check with the "IsOnline" field and must be negated to show the "was" status properly.
+				$onlineStatus = @{$True = "offline"; $False = "online" }
+				$clientWas = $onlineStatus[$TodaysReport.IsOnline]; $clientIs = $onlineStatus[$TodaysReport.IsOnline]
             } elseif($clientDeltas.InvokableChange -eq $True) {
-                $invokableWas = if($TodaysReport.Invokable -eq $True) { "invokable" } else { "uninvokable" }
-                $invokableNow = if($invokableWas -eq "invokable") { "uninvokable" } else { "invokable" }
-                $NOTIFBODY_Rpt += "Client was <span class='$NotificationsHTMLPriorValClass'>$invokableWas</span>"
-                $NOTIFBODY_Rpt += ", and is now <span class='$NotificationsHTMLNewValClass'>$invokableNow</span>."
-            }
-
-			# One of the two above will always be True, so just close the div tag here.
+				# Same as the above onlineStatus field.
+				$invokableStatus = @{$True = "uninvokable"; $False = "invokable" }
+				$clientWas = $invokableStatus[$TodaysReport.Invokable]; $clientIs = $invokableStatus[$TodaysReport.invokable]
+			}
+			$NOTIFBODY_Rpt += "<div class='DiffsSection'>`n"
+			$NOTIFBODY_Rpt += "Client was <span class='$NotificationsHTMLPriorValClass'>$clientWas</span>"
+			$NOTIFBODY_Rpt += ", and is now <span class='$NotificationsHTMLNewValClass'>$clientIs</span>."
 			$NOTIFBODY_Rpt += "`n</div>"
-			# Set the background color of the section.
-			$bgColor = if($FlipColors -eq $True) {"FFFFFF"} else {"EDEDED"}
-			# Move to the next client. This is all we need from the current one.
-			$NOTIFBODY_Wrapper += "`n`n<hr /><table style='border-collapse:collapse;' width='100%'><tr>"
-			$NOTIFBODY_Wrapper += "<td bgColor='#$($bgColor)' width='100%' style='border:none;background-color:#$($bgColor);'>"
-			$NOTIFBODY_Wrapper += "<h2>$client</h2>`n" + $NOTIFBODY_Rpt + "</td></tr></table>`n"
-			# Rotate colors.
-			$FlipColors = -Not $FlipColors
-			continue
+			# If the target is now offline, stop here at tracking the most recent changes.
+			if($TodaysReport.IsOnline -eq $False) {
+				# Move to the next client. This is all we need from the current one.
+				$NOTIFBODY_Wrapper += "`n`n<hr /><table style='border-collapse:collapse;' width='100%'><tr>"
+				$NOTIFBODY_Wrapper += "<td bgColor='#$($NotificationsHTMLBackgroundColors[$FlipColors])' width='100%' "
+				$NOTIFBODY_Wrapper += "style='border:none;background-color:#$($NotificationsHTMLBackgroundColors[$FlipColors]);'>"
+				$NOTIFBODY_Wrapper += "<h2>$client</h2>`n" + $NOTIFBODY_Rpt + "</td></tr></table>`n"
+				# Rotate colors.
+				$FlipColors = -Not $FlipColors
+				continue
+			}
 		}
 		
 		
@@ -1608,9 +1611,9 @@ if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 		# ########## BUILD THE ENTIRE SECTION ##########
 		if($NOTIFBODY_Rpt -ne "") {
 			# Inject the hostname of the client into the email digest, followed by the Rpt subsection that's been constructed.
-			$bgColor = if($FlipColors -eq $True) {"FFFFFF"} else {"EDEDED"}
 			$NOTIFBODY_Wrapper += "`n`n<hr /><table style='border-collapse:collapse;' width='100%'><tr>"
-			$NOTIFBODY_Wrapper += "<td bgColor='#$($bgColor)' width='100%' style='border:none;background-color:#$($bgColor);'>"
+			$NOTIFBODY_Wrapper += "<td bgColor='#$($NotificationsHTMLBackgroundColors[$FlipColors])' width='100%' "
+			$NOTIFBODY_Wrapper += "style='border:none;background-color:#$($NotificationsHTMLBackgroundColors[$FlipColors]);'>"
 			$NOTIFBODY_Wrapper += "<h2>$client</h2>`n" + $NOTIFBODY_Rpt + "</td></tr></table>"
 			# Swap colors.
 			$FlipColors = -Not $FlipColors
