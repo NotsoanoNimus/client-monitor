@@ -1138,6 +1138,7 @@ foreach($client in $clientAddresses) {
 				$paths | ForEach-Object {
 					& $writeDebug -Message "Got Remote Path Content: $_" -Threshold 1 -Prefix '>>>>>>>>' -IsInvoked
 					Get-ChildItem -Path $_ -Recurse | Sort-Object CreationTime | Select-Object FullName
+					if($? -eq $False) { & $writeDebug -Message "Failed to get directory contents." -Threshold 1 -Prefix '>>>>>>>>>>**' -IsInvoked  }
 				}
 			} -ArgumentList $UserProfiles,${function:Write-Debug},$DebugVerbosity
 			# Iterate through the profile list.
@@ -1316,7 +1317,7 @@ foreach($client in $clientAddresses) {
 	# -----------------------------------------
 	# Harvest Windows Store-based applications.
 	Write-Host "---- Gathering store applications..."
-	Write-Debug -Message "INDEX  : [InstallLocation]_[PackageFullName]" -Threshold 1 -Prefix '>>>>>>'
+	Write-Debug -Message "INDEX  : [PackageFullName]" -Threshold 1 -Prefix '>>>>>>'
 	Write-Debug -Message "REQUEST: Get-AppxPackage -AllUsers" -Threshold 1 -Prefix '>>>>>>' -IsInvoked
 	$priorELVL = $ErrorActionPreference; $ErrorActionPreference = 'SilentlyContinue'   # shhhh...
 	# Get the store apps a single time and run all computations on the LOCAL side! (fix to Issue #1 on GitHub).
@@ -1328,21 +1329,21 @@ foreach($client in $clientAddresses) {
 	$reportStoreApps = @{}; $storeAppsIndex = @()
 	# Iterate the list of store apps.
 	foreach($app in $storeAppsList) {
-		$keyname = "$($app.InstallLocation)_$($app.PackageFullName)"
+		$keyname = "$($app.PackageFullName)"
 		$i = 0  #Keep track of the "layer"
 		for(; $i -lt 4; $i++) {
 			# Allow up to 4 nested key names, each successive duplicate being suffixed by an extra underscore.
 			if($reportStoreApps.ContainsKey($keyname)) { $keyname += "_" }
 		}
 		# Get all the fields from the StoreApps trackers that are needed to build the report.
-		$storeAppsInfo = ($storeAppsList | Where-Object -Property InstallLocation -eq "$($app.InstallLocation)" `
+		$storeAppsInfo = ($storeAppsList `
+			| Where-Object -Property PackageFullName -eq "$($app.PackageFullName)" `
 			| Select-Object $TrackedValues.StoreApps)
 		# Additionally, ALWAYS track the PackageUserInformation to find out who has which apps, and their statuses.
-		$perUserAppStatus = ($storeAppsList | Where-Object -Property InstallLocation -eq "$($app.InstallLocation)" `
-			| Select-Object PackageUserInformation) | ForEach-Object {
-				[System.String]::Join("; ", @("App Status:", [string]@(("$($_.PackageUserInformation)" `
-					| Select-String -Pattern '\[[\\\w]+\]\s*\:\s+\w+' -AllMatches).Matches.Value) | Out-String))
-			}
+		$perUserAppStatus = "App Status: `r`n" + [System.String]::Join("`r`n", `
+			@($storeAppsInfo.PackageUserInformation | ForEach-Object {
+				($_ | Select-String -Pattern '\[[\\\w]+\]\s*\:\s+\w+' -AllMatches).Matches.Value
+			}))
 		# Add the PackageUserInformation property (with extracted names/statuses) into the final object.
 		$storeAppsInfo | Add-Member -Name PackageUserInformation -Type NoteProperty -Value "$($perUserAppStatus)"
 		$reportStoreApps.Add($keyname, $storeAppsInfo)
