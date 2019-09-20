@@ -152,6 +152,11 @@ Each tweak will include its own description (if its variable name isn't descript
   + **$NotificationsFiltersBlacklist** -- Is the filter a blacklist (default is yes)? If so, anything added to the below object in the target sections is selectively *FILTERED OUT*. Conversely, if set to `$False` then only the given values/patterns will be allowed (thus acting as a whitelist).
   + **$NotificationsFilteredIndicator** -- A string (HTML formatting optional) to insert when an item is filtered from a notification, if the above value is `$True`.
   + **$NotificationFiltersRegex** -- _False by default_. Set the mode for filtering to **regex** instead of wildcard. This will cause the strings entered as filters to be run against the PowerShell `-Match` operator rather than the `-Like` operator. Consider this setting "advanced" and **do not** change this unless you'd like to use regex filtering instead.
++ **$NotificationsRecentInstallationsFiltering** -- When a notification includes deltas of InstalledApps that have *"DisplayVersion"* and *"DisplayName"* changes only, append the _specific version_ to a destination file, and automatically add it to the "Changed" section of the **$NotificationsFilters.InstalledApps.Changed** object.
+  + For this to work, _$TrackedValues_ **MUST** include both "DisplayName" and "DisplayVersion". Otherwise, these tweaks are ignored.
++ **$NotificationsRecentInstallationsAutoTrack** -- If True (and above is enabled), the script will automatically track/index InstalledApps version changes in the destination file.
++ **$NotificationsRecentInstallationsReportLoc** -- The full path of the file to read/write for Recent Installations tracking.
+  + By default, this is placed in the Reports Directory with a static filename.
 + **$FilenameTracking** -- Enable/Disable filename tracking on the clients. This allows for greater control over environment monitoring, if desired.
   + **$TrackedFilenameViewLimit** -- How many files to show in the "_most recent_" view in the emailed notification/report. This just presents a sample list of the most recently modified files matching the given pattern, up to the limit set. Recommended max of 20.
   + **$TrackedFilenameLocations** -- Define which places on the target machine's disk should be checked. These are the predefined locations that should be used with caution if the target machine is not the direct localhost.
@@ -205,6 +210,7 @@ Keep in mind that regardless of the options you choose to implement as the admin
 - ~~Make compared & selected fields from each category (StoreApps, Services, etc) dynamic using a single tweak. Basically allow a single tweak to define which fields are discovered and compared among the categories.~~
 - ~~Add some form of SMTP relay using authentication, perhaps with `Get-Credential`. Haven't looked into this too much yet.~~
 - _(?)_ Add a way to dynamically change the indexing format used for keying certain values.
+- Update documentation and _docs_ folder with some client-monitor example environments.
 - **IMPORTANT**: Notification filters _FAIL_ when being applied to ARRAYS OF OBJECTS. So if a certain key/value pair in any fetched information returns multiple table entries, the notification filters will not apply to them. There are **two** possible fixes:
   - Within the notifications filter, split the array if it is indeed an array,
   - _AND/OR_ Ensure that the indexing variable name is always unique.

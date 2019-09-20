@@ -241,6 +241,18 @@ $NotificationsFilters = @{
 }
 
 
+# When a notification includes deltas of InstalledApps that have "DisplayVersion" and "DisplayName" changes only,
+### append the specific version to a text file, and automatically add it to the "Changed" section of the above
+### $NotificationsFilters.InstalledApps.Changed object. For this to work, $TrackedValues MUST include both
+### "DisplayName" and "DisplayVersion".
+$NotificationsRecentInstallationsFiltering = $True
+# If True (and above is enabled), the script will automatically track/index InstalledApps version changes in the destination file.
+$NotificationsRecentInstallationsAutoTrack = $False
+# The full path of the file to read/write for Recent Installations tracking.
+### By default, this is placed in the Reports Directory with a static filename.
+$NotificationsRecentInstallationsReportLoc = "$ReportsDirectory\recentInstallationTracking.log"
+
+
 # Enable/Disable filename tracking on the system. This allows for greater control over environment monitoring.
 $FilenameTracking = $True
 # How many files to show in the "most recent" view in the notification/report.
@@ -479,6 +491,31 @@ Function Compare-Deltas() {
 		# If a "True" was found, there was a difference detected.
 		if($diffs.Contains($True)) {
 			Write-Debug -Message "Differences between reports detected for this item: $item." -Threshold 4 -Prefix '>>>>'
+			# Check that auto-tracking is enabled for InstalledApps suppression, and that this is a call for InstalledApps.
+			if(($NotificationsRecentInstallationsAutoTrack -eq $True) -And
+			  (Test-Path $NotificationsRecentInstallationsReportLoc) -And
+			  ($CompareProperties -contains "DisplayName") -And
+			  ($CompareProperties -contains "DisplayVersion")) {
+				if(($todayObject."DisplayName" -ne $priorObject."DisplayName") -Or
+				($todayObject."DisplayName" -ne $priorObject."DisplayVersion")) {
+					$readInFilters = Get-Content $NotificationsRecentInstallationsReportLoc | ConvertFrom-Json
+					if($? -eq $True) {  # Successful JSON conversion.
+						Write-Debug -Message "Auto-Tracking {InstalledApps}: Adding filters to filters object '$NotificationsRecentInstallationsReportLoc'." -Threshold 4 -Prefix '>>>>>>'
+						Write-Debug -Message "Setting properties DisplayName=`"$($todayObject.DisplayName)`", DisplayVersion=`"$($todayObject.DisplayVersion)`"" -Threshold 4 -Prefix '>>>>>>'
+						$installedAppFilterProperties = $readInFilters["$($todayObject.DisplayName)"]
+						# Check to see if the DisplayVersion is not already in the array of strings for this DisplayName.
+						if($installedAppFilterProperties -notcontains "$($todayObject.DisplayVersion)") {
+							# Add it to the array.
+							$installedAppFilterProperties += @($todayObject.DisplayVersion)
+							# Splice it onto the object.
+							$readInFilters | Add-Member -Name "$($todayObject.DisplayName)" `
+								-Value $installedAppFilterProperties -Type NoteProperty -Force
+							# Write the new spliced object to the JSON file.
+							($readInFilters | ConvertTo-Json) | Set-Content $NotificationsRecentInstallationsReportLoc -Force
+						}
+					}
+				}
+			}
 			# For each property name to compare, add on the _prior variable with the value of the "Prior" object.
 			$CompareProperties | ForEach-Object {
 				$todayObject | Add-Member -Name "$($_)_prior" -Value $priorObject.$_ -Type NoteProperty
@@ -517,7 +554,8 @@ Function Add-ToReport() {
 		[Parameter(Mandatory=$True)][PSCustomObject]$RemovedObject,
 		[Parameter(Mandatory=$True)][PSCustomObject]$ChangedObject,
 		[Parameter(Mandatory=$True)][string]$ItemName,
-		[Parameter(Mandatory=$True)][string]$ItemType
+		[Parameter(Mandatory=$True)][string]$ItemType,
+		[System.Array]$PreFilteredItems = $null
 	)
 	# Declare initial local variables.
 	# NOTIFSXN later gets extended by underscored/suffixed variables as the script builds the notification.
@@ -620,6 +658,14 @@ Function Add-ToReport() {
 		$SomethingUnfiltered = $False   # Used to indicate if something NOT filtered was present.
 		$filteredCount = 0  # Used to indicate how many items were filtered from the notification.
 		foreach($changed in $ChangedObject.Keys) {
+			if($PreFilteredItems.Count -gt 0) {
+				# There are items that are pre-filtered. Ensure this key isn't on that list.
+				if($PreFilteredItems.Contains("$($changed)")) {
+					Write-Debug -Message "ITEM IS FILTERED (pre-filtered)." -Threshold 2 -Prefix '>>>>>>>>'
+					if($NotificationsShowFilteredItem -eq $True) { $filteredCount++ }
+					continue
+				}
+			}
 			Write-Debug -Message "Adding CHANGED object to the report with keyname $changed." -Threshold 2 -Prefix '>>>>>>'
 			# ------------- CHECK BOTH OBJECTS WITH FILTERS ---------------
 			# For each key in the changed item, check the value of the field against the values in the notification filters.
@@ -926,6 +972,21 @@ if(($ReportsDirectory -eq "") -Or (-Not(Test-Path "$ReportsDirectory"))) {
 	exit 2
 }
 
+# Reading the installed apps filters has to be done before any items are collected or generated.
+$filteredInstalledApps = $null
+if(Test-Path $NotificationsRecentInstallationsReportLoc) {
+	Write-Debug -Message "Reading recent installations filters configuration file at '$NotificationsRecentInstallationsReportLoc'." -Threshold 2 -Prefix '>>>>'
+	# Import from a JSON format.
+	$filteredInstalledApps = Get-Content $NotificationsRecentInstallationsReportLoc | ConvertFrom-Json
+	if($null -eq $filteredInstalledApps) {
+		# Make sure the read items are valid.
+		Write-Debug -Message "Unable to read the file at '$NotificationsRecentInstallationsReportLoc'." -Threshold 1 -Prefix '>>>>'
+	}
+} else {
+	Write-Debug -Message "Recent Installations filter file '$NotificationsRecentInstallationsReportLoc' doesn't exist. Creating." -Threshold 2 -Prefix '>>>>'
+	(@{} | ConvertTo-Json) | Out-File -FilePath "$NotificationsRecentInstallationsReportLoc" -Force
+}
+
 # Initialize an empty array for the client address/hostname pool.
 $clientAddresses = [System.Collections.ArrayList]@()
 
@@ -1136,7 +1197,7 @@ foreach($client in $clientAddresses) {
 				$writeDebug = [scriptblock]::Create($writeDebugCommand)
 				# Get the actual contents of all the directories and send the full path + filename back out.
 				$paths | ForEach-Object {
-					& $writeDebug -Message "Got Remote Path Content: $_" -Threshold 1 -Prefix '>>>>>>>>' -IsInvoked
+					& $writeDebug -Message "Fetching Remote Path Content: $_" -Threshold 1 -Prefix '>>>>>>>>' -IsInvoked
 					Get-ChildItem -Path $_ -Recurse | Sort-Object CreationTime | Select-Object FullName
 					if($? -eq $False) { & $writeDebug -Message "Failed to get directory contents." -Threshold 1 -Prefix '>>>>>>>>>>**' -IsInvoked  }
 				}
@@ -1672,6 +1733,7 @@ if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 			# Read the newly-generated report back in just for this, to get the current online & invokable statuses.
 			$TodaysReport = @(Get-ChildItem -Path "$ReportsDirectory" -Filter "Report-$($client.Hostname)*" `
 				| Sort-Object LastWriteTime | Select-Object -Last 1)[0].Name
+			Write-Debug -Message "Importing recent report: $TodaysReport" -Threshold 2 -Prefix '>>>>>>'
 			$TodaysReport = Get-Content "$ReportsDirectory\$TodaysReport" | ConvertFrom-Json
 			# Build the section for the report, to show the online/offline differences.
             if($clientDeltas.OnlineStatusChange -eq $True) {
@@ -1767,13 +1829,47 @@ if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 		#    Use a modularized function to add to the report body if the given category/section is enabled with the triggers.
 		# -----------------------------------------
 		# INSTALLED APPLICATIONS
+		$ChangedInstalledAppsFiltered = @()
+		if(($NotificationsRecentInstallationsFiltering -eq $True) -And
+		  ($TrackedValues.InstalledApps.Contains("DisplayName")) -And
+		  ($TrackedValues.InstalledApps.Contains("DisplayVersion"))) {
+			Write-Debug -Message "Attempting to track recent installations and suppress recent version changes." -Threshold 1 -Prefix '>>'
+			# Test whether or not the trackers CSV exists.
+			if($null -ne $filteredInstalledApps) {
+				# Set displayNames to each column name.
+				$displayNames = ($filteredInstalledApps | Get-Member -Type NoteProperty).Name
+				# Output the individual items to the debug console.
+				if($DebugVerbosity -gt 0) {
+					Write-Debug -Message "Items and Installed Apps with version updates being suppressed:" -Threshold 3 -Prefix '>>>>'
+					$displayNames | ForEach-Object { Write-Debug -Message "$($_) :: $($filteredInstalledApps.$_)" -Threshold 3 -Prefix '>>>>>>' }
+				}
+				# Iterate the ChangedInstalledApps section. If the item matches one of the filters, add it to the tracking object.
+				### The tracking object is later added to the Add-ToReport function for InstalledApps and then filtered out of the notification.
+				if($clientDeltas.ChangedInstalledApps.Count -gt 0) {
+					Write-Debug -Message "Changed {InstalledApps} were detected. Searching." -Threshold 3 -Prefix '>>>>>>'
+					foreach($keyname in $clientDeltas.ChangedInstalledApps.Keys) {
+						Write-Debug -Message "Examining CHANGED {InstalledApps} key: $keyname" -Threshold 4 -Prefix '>>>>>>>>'
+						$installedApp = $clientDeltas.ChangedInstalledApps.$keyname
+						# Not using the _prior field because the concern is for the version the app is going TO.
+						if($displayNames -contains "$($installedApp.DisplayName)") {
+							$displayName = "$($installedApp.DisplayName)"
+							Write-Debug -Message "Found matching DisplayName :: $displayName" -Threshold 4 -Prefix '>>>>>>>>>>'
+							if($filteredInstalledApps.$displayName -contains "$($installedApp.DisplayVersion)") {
+								Write-Debug -Message "Found matching DisplayVersion :: $($installedApp.DisplayVersion)" -Threshold 4 -Prefix '>>>>>>>>>>'
+								$ChangedInstalledAppsFiltered += $keyname
+							}
+						}
+					}
+				} else { Write-Debug -Message "No changed {InstalledApps} were detected." -Threshold 3 -Prefix '>>>>>>' }
+			}
+		}
 		if($NotificationsTriggers.InstalledAppsChange -eq $True) {
 			Write-Debug -Message "Building {InstalledApps} Section." -Threshold 1 -Prefix '>>>>>>'
 			# Add the gathered information to the report.
 			$NOTIFBODY_Rpt += Add-ToReport `
 				-NewObject $clientDeltas.NewInstalledApps -RemovedObject $clientDeltas.RemovedInstalledApps `
 				-ChangedObject $clientDeltas.ChangedInstalledApps -ItemName "Installed Applications" `
-				-ItemType "InstalledApps"
+				-ItemType "InstalledApps" -PreFilteredItems $ChangedInstalledAppsFiltered
 		}
 		# -----------------------------------------
 		# SERVICES
