@@ -497,7 +497,7 @@ Function Compare-Deltas() {
 			  ($CompareProperties -contains "DisplayName") -And
 			  ($CompareProperties -contains "DisplayVersion")) {
 				if(($todayObject."DisplayName" -ne $priorObject."DisplayName") -Or
-				($todayObject."DisplayName" -ne $priorObject."DisplayVersion")) {
+				($todayObject."DisplayVersion" -ne $priorObject."DisplayVersion")) {
 					$readInFilters = Get-Content $NotificationsRecentInstallationsReportLoc | ConvertFrom-Json
 					if($? -eq $True) {  # Successful JSON conversion.
 						Write-Debug -Message "Auto-Tracking {InstalledApps}: Adding filters to filters object '$NotificationsRecentInstallationsReportLoc'." -Threshold 4 -Prefix '>>>>>>'
@@ -851,7 +851,7 @@ Function Mount-UserHives() {
 				Copy-Item -Path "$($profile)\\$($Info.NTUSERLoc)\\NTUSER.DAT" -Destination $hiveFile -Force
 				# If there was en error copying the file ($False return), that means it's open (and locked). Skip.
 				if($? -eq $True) {
-					& $writeDebug -Message "Copied NTUSER.DAT hive for $profile" -Threshold 2 -Prefix '>>>>>>' -IsInvoked
+                    & $writeDebug -Message "Copied NTUSER.DAT hive for $profile" -Threshold 2 -Prefix '>>>>>>' -IsInvoked
 					if(-Not(Test-Path -Path $hiveFile)) {
 						Write-Host "~~~~ Could not find or access the shadow hive file, despite it being copied successfully. Skipping..."
 						continue
@@ -863,7 +863,7 @@ Function Mount-UserHives() {
 					# Index the mounted hive.
 					if($? -eq $True) { $mountedHives += "$($Info.Domain)\$($username)" }
 				} else {
-					& $writeDebug -Message "Unable to copy NTUSER.DAT hive for $profile" -Threshold 2 -Prefix '>>>>>>' -IsInvoked
+                    & $writeDebug -Message "Unable to copy NTUSER.DAT hive for $profile" -Threshold 2 -Prefix '>>>>>>' -IsInvoked
 					# See if the user's profile name is already mounted under "CLI-MON-[username]".
 					$profilesMounted = (Get-ChildItem "REGISTRY::HKU" `
 						| Where-Object -Property PSChildName -Like "CLI-MON-*").PSChildName
