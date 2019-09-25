@@ -61,7 +61,7 @@ if(-Not(Test-Path "$($ConfigFile)")) {
 ##################################################
 #                     TWEAKS                     #
 ##################################################
-# Tweaks are sourced from a separate file.
+# "Tweaks" (the deprecated name for "config variables") are sourced from a separate file.
 Write-Debug "Loading Client Monitor ConfigFile at '$ConfigFile'..." -Threshold 1 -Prefix '>>'
 . "$($ConfigFile)"
 # Sanity check to ensure the provided config file is a valid client-monitor configuration.
@@ -1656,7 +1656,9 @@ if($deltas.Count -gt 0 -And $NoNotifications -eq $False) {
 						Write-Debug -Message "Examining CHANGED {InstalledApps} key: $keyname" -Threshold 4 -Prefix '>>>>>>>>'
 						$installedApp = $clientDeltas.ChangedInstalledApps.$keyname
 						# Not using the _prior field because the concern is for the version the app is going TO.
-						if($displayNames -contains "$($installedApp.DisplayName)") {
+						Write-Debug "Prior : $($installedApp.DisplayVersion_prior) --- New : $($installedApp.DisplayVersion)" -Threshold 4 -Prefix '>>>>>>>>>>>>'
+						if(($displayNames -contains "$($installedApp.DisplayName)") -And
+						  ($installedApp.DisplayVersion_prior -ne $installedApp.DisplayVersion)) {
 							$displayName = "$($installedApp.DisplayName)"
 							Write-Debug -Message "Found matching DisplayName :: $displayName" -Threshold 4 -Prefix '>>>>>>>>>>'
 							if($filteredInstalledApps.$displayName -contains "$($installedApp.DisplayVersion)") {
