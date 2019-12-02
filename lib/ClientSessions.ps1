@@ -162,13 +162,16 @@ Function Get-TargetClients() {
         # The "ClientsList" parameter wasn't set, implying to use MSAD w/ DomainFilter.
         try {
             Write-Debug -Message "{Get-ADComputer -Filter `"$($global:CliMonConfig.DomainUserFilter)`"}" -Threshold 3 -Prefix '>>>>'
-            $local:clientNames = Get-ADComputer -Filter $global:CliMonConfig.DomainUserFilter `
-                | Select-Object -Property Name
+            $local:clientNames = (Get-ADComputer -Filter $global:CliMonConfig.DomainUserFilter).Name
             $local:clientNames | ForEach-Object {
                 Write-Debug -Message "Captured host: $_" -Threshold 4 -Prefix '>>>>>>'
             }
             return $local:clientNames
-        } catch { return $null }
+        } catch {
+            Write-Host "~~~~ The Get-ADComputer cmdlet was tried, but didn't return any valid results."
+            Write-Host "~~~~ Perhaps you should use a Clients List."
+            return $null
+        }
     } else {
         # The "ClientsList" parameter is manually set/passed. Find it, if possible, and import it.
         if(-Not(Test-Path $ClientsList)) {
