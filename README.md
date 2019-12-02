@@ -15,6 +15,18 @@ A PowerShell script to monitor a client environment for changes (filename patter
 # How to Use It
 Simple! The new version of Client Monitor comes prepackaged with a very simple _.bat_ file you can use to run the monitor while also capturing its output. You can modify this file to also run other pre- and post-script tasks. It's best advised to put the `monitor.bat` file as the "Action" in Windows task scheduler if you're going to use this tool as a scheduled monitor.
 
+### Take Ownership
+**IMPORTANT**: If you don't do this, the script will _not work_ on your machine!
+
+Before using any of the PowerShell scripts, please **open your own PowerShell window** -- _{WindowsKey+R}, powershell, {ENTER}_ -- and enter the following command:
+```
+(Get-ChildItem -Path "C:\the\directory\of\clientmonitor\" -Recurse `
+| where Name -Match '\.psm?1$').FullName | % { Unblock-File -Path $_ }
+```
+The files should now be **unblocked** from running on your machine. By default, they are blocked since they'll have come from the untrustworthy internet, and as of right now do not have a valid digital signature.
+
+This step is going to be required until I get around to digitally verifying and signing the Client Monitor script, at which point this section of the _how-to_ will be removed.
+
 ### Ready the Target Clients
 If the scanned clients include others outside of just your local machine, which will be the case for most users, you'll want to pre-configure each client to accept remote invocations for PowerShell with the **WinRM** service. [You should read more about this.](https://www.pcwdld.com/what-is-winrm)
 
@@ -112,6 +124,7 @@ Optional. Manually override any PSCredential object defined in the configuration
 
 
 # Things TODO
+- [ ] Certify and digitally sign the PowerShell scripts.
 - [ ] IPv6 client support.
 - [ ] Add `Write-Debug` calls to the methods for the `CliMonClient` module class to provide much better transparency. Also add them within the class definition of `CliMonNotification`.
 - [ ] Information limitation. Runs of Client Monitor (particularly the "new" version) have not been tested in environments where the clients list is greater than about 60 targets or so.
