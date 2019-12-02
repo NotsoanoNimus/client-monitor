@@ -637,24 +637,19 @@ Function Get-ClientTrackedFiles() {
             $local:returnData = @{}
             # If the input isn't a valid array of objects, return an empty object.
             if($null -eq $DataInput -Or $DataInput.Length -eq 0) { return @{} }
+            # If the Profile parameter is set, the iteration is complicated by searching for BOTH
+            #  a matching pattern and a matching profile. This step extracts items from the Profile
+            #  that's being targeted, and helps to slim down the amount of per-pattern processing needed.
+            if($Profile -ne $null -And $Profile -ne "") {
+                $DataInput = ($DataInput | Where-Object -Property FullName -Like "$($Profile)")
+            }
             # For each filename pattern being checked (from the config), check every individual
-            #  object in the contents of the input data. If a filename matches both the pattern,
-            #  it will be tracked/reported in the return data.
+            #  object in the contents of the input data. If a filename matches the pattern, it
+            #  will be tracked/reported in the return data.
             foreach($pattern in $global:CliMonConfig.FilenameTracking.Patterns.Keys) {
                 Write-Debug -Message "Matching against pattern: $pattern" -Threshold 3 -Prefix '>>>>>>>>'
                 # matchedFiles will store all files matching the pattern, depending on the call type.
-                $local:matchedFiles =
-                    if($Profile -ne $null -And $Profile -ne "") {
-                        # If the Profile parameter is set, the iteration is complicated by
-                        #  searching for BOTH a matching pattern and a matching profile.
-                        $DataInput | Where-Object -Property FullName -Like "$($Profile)\*" `
-                            | Where-Object -Property FullName -Match $pattern
-                    } else {
-                        # Otherwise, simply search for the pattern in the filenames.
-                        ($DataInput | Where-Object -Property FullName -Match $pattern)
-                    }
-                # Strip the objects down to an array of all full file paths.
-                $local:matchedFiles = $local:matchedFiles.FullName
+                $local:matchedFiles = ($DataInput | Where-Object -Property FullName -Match $pattern).FullName
                 # fileCount will store the amount of files that matched the pattern.
                 $local:fileCount = $local:matchedFiles.Count
                 if($null -eq $local:fileCount) { $local:fileCount = 0 }   #prevent a null value
