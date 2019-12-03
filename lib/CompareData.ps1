@@ -46,6 +46,9 @@ $global:CliMonEmptyDeltas = [Ordered]@{
 Function Compare-EnvironmentDeltas() {
     Write-Host "`n`n`nComparing the differences between current reports and prior reports." `
         -ForegroundColor Green
+    # This is a preparatory step, to forcibly cause a comparison between a property that is not
+    #  intended to be manually removable by a user of this script.
+    $global:CliMonConfig.TrackedValues.StoreApps += "PackageUserInformation"
     # Set up scaffolding for the deltas object. It will be a hashtable of per-client-hostname
     #  difference objects, as defined in the below loop.
     $global:CliMonDeltas = @{}
@@ -140,9 +143,6 @@ Function Get-ClientDeltas() {
         [Object]$MostRecentReport,
         [Object]$PriorReport
     )
-    # This is a preparatory step, to forcibly cause a comparison between a property that is not
-    #  intended to be manually removable by a user of this script.
-    $global:CliMonConfig.TrackedValues.StoreApps += "PackageUserInformation"
     # Iterate each key in the "TrackedValues" hashtable from the configuration.
     #  The keys array looks something like: @("InstalledApps", "StoreApps", ...)
     foreach($propertySet in $global:CliMonConfig.TrackedValues.Keys) {
