@@ -20,7 +20,7 @@ Simple! The new version of Client Monitor comes prepackaged with a very simple _
 
 Before using any of the PowerShell scripts, please **open your own PowerShell window** -- _{WindowsKey+R}, powershell, {ENTER}_ -- and enter the following command:
 ```
-(Get-ChildItem -Path "C:\the\directory\of\clientmonitor\" -Recurse `
+(Get-ChildItem -Path "C:\the\directory\of\clientmonitor\" -Recurse -File `
 | where Name -Match '\.psm?1$').FullName | % { Unblock-File -Path $_ }
 ```
 The files should now be **unblocked** from running on your machine. By default, they are blocked since they'll have come from the untrustworthy internet, and as of right now do not have a valid digital signature.

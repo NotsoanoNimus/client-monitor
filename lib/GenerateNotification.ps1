@@ -68,7 +68,7 @@ Function Write-CliMonNotification() {
         Write-Host "-- There are clients with changes to parse."
         # Each section/call below is dependent on whether the corresponding Trigger is enabled
         #  in the configuration for Notifications.
-        foreach($client in $clientsWithChanges) {
+        foreach($client in ($clientsWithChanges | Sort-Object)) {
             $local:parseType = if($NoFilters -eq $False) { "filtered" } else { "unfiltered" }
             Write-Host "---- Parsing $($local:parseType) notification data for client " -NoNewline
             Write-Host "$($client.Hostname)" -ForegroundColor Cyan -NoNewline
