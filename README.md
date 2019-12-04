@@ -123,6 +123,16 @@ Optional. Defaults to ".\Client-MonitorConfig.ps1", but can be the full path of 
 Optional. Manually override any PSCredential object defined in the configuration for SMTP relays.
 
 
+# Benchmarking
+This section will be given more information as time goes on. However, it's worth nothing here in the README that the **average per-client processing time** for a _non-first-time run_ (and when _not_ debugging) seems to average approximately `12 seconds` over fiber connections in a LAN. This is a significant improvement over the former speed, which was about _34 seconds_ when last measured during the "Legacy" version.
+
+The average time is calculated simply as the time from start-to-finish ("finish" being the end of notification generation), divided by the number of target clients to scan in the environment. Because of this, the more deltas that are tracked throughout the script's session, the longer the processing time will become. This means that the presented average is heavily biased towards a **no-deltas-reported** sort of scenario, meaning that very few, if any, deltas were detected by the monitor -- therefore very little time is spent on comparisons and notification generation.
+
+Recently, the script has been given the ability to provide two valuable pieces of information in the final report (if configured):
+- The total runtime of the script.
+- The number of _valid_ clients being processed.
+
+
 # Things TODO
 - [ ] Certify and digitally sign the PowerShell scripts.
 - [ ] IPv6 client support.

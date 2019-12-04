@@ -143,6 +143,9 @@ if($global:CliMonConfig.ConfigImported -ne $True) {
     exit 2
 }
 
+# Initialize the global timer.
+$global:CliMonGenTimer = [System.Diagnostics.Stopwatch]::new()
+
 
 
 # Parameters (or other global variables) can be set here in a static way if the user
@@ -179,6 +182,8 @@ Function Invoke-MainRoutine() {
         Invoke-CliMonCleanup -TrappedError:$True
         break
     }
+    # Start the global timer object.
+    $global:CliMonGenTimer.Start()
     # Output the expected configuration of the environment based on the parameters supplied.
     Show-ClientMonitorRuntimeEnvironment
     # Defined in the "Miscellaneous.ps1" file is a method for verifying the configuration variables 

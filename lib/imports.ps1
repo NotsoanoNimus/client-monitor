@@ -48,6 +48,9 @@ $ImportsDirectory = Split-Path $PSCommandPath
 ) | ForEach-Object { . "$ImportsDirectory\$_.ps1" }
 
 
+# A global timer/stopwatch object to track the runtime of the script, from initialization to just
+#  after notification generation.
+$global:CliMonGenTimer = $null
 # Other important global declarations. Serves to also nullify the globals if the script is being
 #  run multiple times from the same instance of PowerShell.
 # List of CliMonClient objects instantiated at the start of the script.

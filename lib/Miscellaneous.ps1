@@ -261,6 +261,8 @@ Function Invoke-CliMonCleanup() {
     # Regardless of either outcome, clean up ANY custom variables as needed.
     Remove-Variable * -ErrorAction SilentlyContinue
     $error.Clear()
+    # Regardless of the exit type, if the global timer is running, stop it.
+    if($global:CliMonGenTimer.IsRunning -eq $True) { $global:CliMonGenTimer.Stop() }
 }
 
 # Helper function for report cleanup. Compare two dates and return the difference in hours

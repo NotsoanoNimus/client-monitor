@@ -132,7 +132,7 @@ Function Write-CliMonNotification() {
         #  were unfiltered changes present from the last steps.
         if($BodyText_Container.Length -gt 0 -Or $BodyText_Container.ToString() -ne "") {
             $local:intermediateResult = $global:CliMonConfig.Notifications.ChangesBodyHeader +
-                $BodyText_Container.ToString()
+                (Add-TimeInformationToBody) + $BodyText_Container.ToString()
             [void]$BodyText_Container.Clear()
             [void]$BodyText_Container.Append($local:intermediateResult)
         }
@@ -603,4 +603,17 @@ Function Convert-NotificationToPlain() {
     Write-Debug -Message "Deleting any HTML-like tags (text wrapped with angle-brackets)." -Threshold 3 -Prefix '>>>>'
     # Set the global variable to the finished intermediate.
     $global:CliMonNotification = $local:bodyIntermediate
+}
+
+
+
+# Return an HTML string with runtime information for the Client Monitor script: duration and valid
+#  client count based on the CliMonClients array.
+Function Add-TimeInformationToBody() {
+    # Stop the global timer.
+    if($global:CliMonGenTimer.IsRunning) { $global:CliMonGenTimer.Stop() }
+    # Return an HTML string with the time-stamped information.
+    return ("<p>There were $($global:CliMonClients.Count) valid clients.<br />`n" +
+        "This notification was generated in $($global:CliMonGenTimer.Elapsed.Minutes) " +
+        "minutes and $($global:CliMonGenTimer.Elapsed.Seconds) seconds.</p>`n`n")
 }
