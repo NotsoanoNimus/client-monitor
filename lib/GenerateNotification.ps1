@@ -556,15 +556,11 @@ Function Get-ClientNotificationSection() {
     # NOTE: Be certain to cast all Append calls to VOID to prevent capturing multiple values.
     param([String]$NotificationBody, [Object]$TargetClient)
     Write-Debug -Message "Building the client's notification section." -Threshold 1 -Prefix '>>'
-    # Check if realname translation is active.
-    if($global:CliMonConfig.RealnameTranslation.Enabled -eq $True) {
-        Write-Debug -Message "Client's Real Name: $($TargetClient.RealName)" -Threshold 1 -Prefix '>>>>'
-        $local:ClientName = $TargetClient.RealName
-    } else {
-        Write-Debug -Message ("Client RealName Translation is disabled. " +
-            "Using alternate name: $($TargetClient.RealNameAlternative)") -Threshold 1 -Prefix '>>>>'
-        $local:ClientName = $TargetClient.RealNameAlternative
-    }
+    # Get the client's real name. If this is blank or null, it will not be included in the client header.
+    $local:ClientName = $TargetClient.RealName
+    # Get the client header value. For now, this is the client hostname -- but later it may be possible
+    #  to show clients by IP address, or to display it somehow, so it's left as a local variable definition.
+    $local:ClientHeader = $TargetClient.Hostname
     # Initialize a StringBuilder, feed it the string inside the template, and return it.
     $local:finalClientSection = [System.Text.StringBuilder]::new()
     [void]$local:finalClientSection.Append(
@@ -574,8 +570,15 @@ Function Get-ClientNotificationSection() {
     [void]$local:finalClientSection.Append("width='100%' style='border:none;background-color:")
     [void]$local:finalClientSection.Append(
         "#$($global:CliMonConfig.Notifications.HTMLBackgroundColors[$global:CliMonFlipColors]);'>")
-    [void]$local:finalClientSection.Append(
-        "<h2>$($local:ClientName)</h2>`n$($NotificationBody)</td></tr></table>`n")
+    [void]$local:finalClientSection.Append("<h2>$($local:ClientHeader)")
+    if($null -ne $local:ClientName -And $local:ClientName -ne "") {
+        Write-Debug -Message "Client's Real Name: $($TargetClient.RealName)" -Threshold 1 -Prefix '>>>>'
+        [void]$local:finalClientSection.Append(" - $($local:ClientName)")
+    } else {
+        Write-Debug -Message "Client RealName Translation is disabled or the name was not found." `
+            -Threshold 1 -Prefix '>>>>'
+    }
+    [void]$local:finalClientSection.Append("</h2>`n$($NotificationBody)</td></tr></table>`n")
     return $local:finalClientSection.ToString()
 }
 

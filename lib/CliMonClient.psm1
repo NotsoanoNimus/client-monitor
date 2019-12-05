@@ -46,7 +46,6 @@ Class CliMonClient {
     [String]$Hostname = $null   #the client's hostname (capitalized, with the DomainSuffix variable added)
     [String]$IpAddress = $null   #the client's ipv4 address
     [String]$RealName = ""   #the full (or partial) name of the workstation
-    [String]$RealNameAlternative = ""   #the alternative name to use when the RealName can't be found
     [Boolean]$IsValid = $False   #is the object a 'valid' client (has all needed info)
     [Boolean]$SessionOpen = $False   #is the session currently open
     [System.Management.Automation.Runspaces.PSSession]$ClientSession = $null
@@ -161,16 +160,9 @@ Class CliMonClient {
     [String] GetRealName() {
         $local:indexType = $global:CliMonConfig.RealnameTranslation.IndexedBy
         # Get the index value. If there's an incorrect value for the indexType, return an empty string.
-        if($local:indexType -eq "Hostname") {
-            $local:indexValue = $this.Hostname
-            $this.RealNameAlternative = $this.Hostname
-        } elseif($local:indexType -eq "IpAddress") {
-            $local:indexValue = $this.IpAddress
-            $this.RealNameAlternative = $this.IpAddress
-        } else {
-            $this.RealNameAlternative = $this.Hostname
-            return ""
-        }
+        if($local:indexType -eq "Hostname") { $local:indexValue = $this.Hostname }
+        elseif($local:indexType -eq "IpAddress") { $local:indexValue = $this.IpAddress }
+        else { return "" }
         $local:queryType = $global:CliMonConfig.RealnameTranslation.Method
         if($local:queryType -eq "HTTPRequest") {
             # Get the base URL, attempt to format it, and attempt to run the request.
