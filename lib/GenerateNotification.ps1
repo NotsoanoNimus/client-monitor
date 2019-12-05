@@ -79,7 +79,11 @@ Function Write-CliMonNotification() {
             [void]$local:BodyText_PerClient.Append((
                 Get-ReachabilityChange -TargetClient $client))
             # Stop processing the client here if they are currently noted as unreachable.
-            if($client.IsOnline -eq $False -Or $client.IsInvokable -eq $False) { continue }
+            if($client.Profile.IsOnline -eq $False -Or $client.Profile.IsInvokable -eq $False) {
+                # This will finalize the client section if they have gone offline.
+                [void]$BodyText_Container.Append($local:BodyText_PerClient.ToString())
+                continue
+            }
             # -----------------------------------------
             # Set the client's deltas object.
             $local:clientDeltas = $global:CliMonDeltas."$($client.Hostname)"
@@ -488,7 +492,7 @@ Function Get-ReachabilityChange() {
         [void]$local:returnData.Append("'>$($local:clientIs)</span>.`n</div>")
         # If for any reason the client is not reachable, finish up the section for the client.
         if($TargetClient.Profile.IsOnline -eq $False -Or $TargetClient.Profile.IsInvokable -eq $False) {
-            [void]$local:returnData.Append((Get-ClientNotificationSection `
+            $local:returnData = ((Get-ClientNotificationSection `
                 -NotificationBody $local:returnData.ToString() -TargetClient $TargetClient))
             Write-Debug -Message "The target is currently unreachable." -Threshold 2 -Prefix '>>>>>>'
         }
@@ -625,7 +629,8 @@ Function Add-TimeInformationToBody() {
     # Stop the global timer.
     if($global:CliMonGenTimer.IsRunning) { $global:CliMonGenTimer.Stop() }
     # Return an HTML string with the time-stamped information.
-    return ("<p>There were $($global:CliMonClients.Count) valid clients.<br />`n" +
-        "This notification was generated in $($global:CliMonGenTimer.Elapsed.Minutes) " +
-        "minutes and $($global:CliMonGenTimer.Elapsed.Seconds) seconds.</p>`n`n")
+    return ("<p class='SummaryText'>There were <strong>$($global:CliMonClients.Count) " +
+        "valid clients that were checked.</strong><br />`n" +
+        "This notification was generated in <strong>$($global:CliMonGenTimer.Elapsed.Minutes) " +
+        "minutes and $($global:CliMonGenTimer.Elapsed.Seconds) seconds</strong>.</p>`n`n")
 }

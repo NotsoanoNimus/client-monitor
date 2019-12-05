@@ -109,9 +109,13 @@ Function Get-ClientStatus() {
         Write-Host ("****  Copying the most recent report (if it exists) forward " +
             "to preserve the client's last known state.")
         if($null -ne $local:priorReport) {
-            # A prior report was fetched, propagate it forward.
+            # A prior report was fetched, propagate it forward, but be certain to preserve status.
+            $local:currentOnlineStatus = $TargetClient.Profile.IsOnline
+            $local:currentInvokeStatus = $TargetClient.Profile.IsInvokable
             Write-Debug -Message "A prior report was fetched; propagating it forward due to unreachability." -Threshold 3 -Prefix '>>>>'
             $TargetClient.Profile = $local:priorReport
+            $TargetClient.Profile.IsOnline = $local:currentOnlineStatus
+            $TargetClient.Profile.IsInvokable = $local:currentInvokeStatus
         }
         $TargetClient.Profile.OnlineStatusChange = $local:onlineStatusChange
         $TargetClient.Profile.InvokableStatusChange = $local:invokableStatusChange
@@ -143,6 +147,8 @@ Function Set-ClientConfigurationVariables() {
         Function Write-Debug() {
             param([int]$Threshold = 10000, [String]$Message, [String]$Prefix = "")
             if($Threshold -le $global:CliMonConfig.Verbosity) {
+                & Write-Host "$(Get-Date -Format 'yyyy-MM-ddTHH:mm:ss') " `
+                    -ForegroundColor DarkCyan -BackgroundColor Black -NoNewline
                 & Write-Host "[$Threshold] " -ForegroundColor Yellow -BackgroundColor Black -NoNewline
                 & Write-Host "$($Prefix) " -ForegroundColor Cyan -BackgroundColor Black -NoNewline
                 # The target-side definition of debug includes this line because Write-Debug calls on the

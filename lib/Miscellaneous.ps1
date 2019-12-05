@@ -170,6 +170,14 @@ Function Update-ScriptConfiguration() {
     # If the DomainUserFilter parameter is defined, override the configuration variable here.
     if($DomainUserFilter -ne "" -And $null -ne $DomainUserFilter) {
         Write-Debug -Message "Overriding configuration for DomainUserFilter: `"$DomainUserFilter`"" -Threshold 2 -Prefix '>>>>'
+        # If the DomainUserFilter is present under the notifications variables, replace it.
+        @("ChangesBodyHeader", "NoChangeBodyText", "HTMLWrapper") | ForEach-Object {
+            $global:CliMonConfig.Notifications.$_ =
+                ($global:CliMonConfig.Notifications.$_ -Replace `
+                [Regex]::Escape($global:CliMonConfig.DomainUserFilter), `
+                "$DomainUserFilter")
+        }
+        # Finally, set the user filter override.
         $global:CliMonConfig.DomainUserFilter = $DomainUserFilter
     }
     # Check to ensure that "PackageUserInformation" is NOT included in the TrackedValues.StoreApps
@@ -287,6 +295,9 @@ Function Write-Debug() {
     param([int]$Threshold = 10000, [String]$Message, [String]$Prefix = "")
     # If the threshold parameter is LESS THAN OR EQUAL TO the configured/passed Debug level...
     if($Threshold -le $global:CliMonConfig.Verbosity) {
+        # Get the time/date.
+        & Write-Host "$(Get-Date -Format 'yyyy-MM-ddTHH:mm:ss') " `
+            -ForegroundColor DarkCyan -BackgroundColor Black -NoNewline
         # Write out the threshold level that was crossed (Debug Verbosity).
         & Write-Host "[$Threshold] " -ForegroundColor Yellow -BackgroundColor Black -NoNewline
         # Write out the given prefix; usually a series of angle brackets works well: '>>'

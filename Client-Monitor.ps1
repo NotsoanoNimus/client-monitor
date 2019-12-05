@@ -143,9 +143,6 @@ if($global:CliMonConfig.ConfigImported -ne $True) {
     exit 2
 }
 
-# Initialize the global timer.
-$global:CliMonGenTimer = [System.Diagnostics.Stopwatch]::new()
-
 
 
 # Parameters (or other global variables) can be set here in a static way if the user
