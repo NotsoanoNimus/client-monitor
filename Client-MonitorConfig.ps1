@@ -90,6 +90,37 @@ $global:CliMonConfig = @{
 	# How verbose to be with debugging output. The higher, the more descriptive; 0 = no debug, 4 = full verbosity.
 	Verbosity = $Debug  # Currently being set to the passed parameter but can be static as well.
 
+	# Section for realname translation. This allows the script to fetch the "real name" of the target
+	#  based on the method used to retrieve it, and will insert that into the notification instead of
+	#  the hostname of the target client.
+	# NOTE: This section is very configuration-sensitive. If anything is wrong in the configuration,
+	#        then the RealnameTranslation will NOT work.
+	RealnameTranslation = @{
+		# Enables the translation, if True. Note that if a client does not have a real name defined or
+		#  the script cannot find the real name based on the options, the value of the IndexedBy field
+		#  will be used instead for the client's name in the notification.
+		Enabled = $True
+		# The string to attach to the Base URL or the use as the index/key into the DirectObject. This
+		#  can be either "IpAddress" or "Hostname", and NOTHING ELSE (or else the translation will fail).
+		IndexedBy = "Hostname"
+		# The below options set the method for translating hostnames. There are currently two options:
+		#  - DirectObject: Use a Hashtable object to translate hostnames directly to real names.
+		#  - HTTPRequest: Use an HTTP request to return a real name string for the given hostname or IP.
+		Method = "HTTPRequest"
+		HTTPRequest = @{
+			# The format-ready URL to insert the "index" value into. '{0}' represents a placeholder for
+			#  where the IP address or hostname will be entered, based on the IndexedBy value above.
+			BaseUrl = ("http://www.fake-url.climon/request.php?keyname={0}");
+		}
+		DirectObject = @{
+			# A one-to-one key/value hashtable that indexes "IndexedBy" value types to their real names.
+			#  EXAMPLES:
+			#   @{"hostname1"="this name"; "hostname2"="another name"; ...} -- For IndexedBy = "Hostname"
+			#   @{"ip1"="this name"; "ip2"="that name"} -- For IndexedBy = "IpAddress"
+			Table = @{};
+		}
+	}
+
 	# These settings are contingent on the DeltasReport parameter being given to the script call.
 	DeltasReport = @{
 		# If the DeltasReport parameter is included in the call to Client Monitor, and this is set to True,

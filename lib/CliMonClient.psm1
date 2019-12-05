@@ -45,6 +45,8 @@ $global:ClientMonitorRegexes = @{
 Class CliMonClient {
     [String]$Hostname = $null   #the client's hostname (capitalized, with the DomainSuffix variable added)
     [String]$IpAddress = $null   #the client's ipv4 address
+    [String]$RealName = ""   #the full (or partial) name of the workstation
+    [String]$RealNameAlternative = ""   #the alternative name to use when the RealName can't be found
     [Boolean]$IsValid = $False   #is the object a 'valid' client (has all needed info)
     [Boolean]$SessionOpen = $False   #is the session currently open
     [System.Management.Automation.Runspaces.PSSession]$ClientSession = $null
@@ -76,6 +78,11 @@ Class CliMonClient {
             else { $this.GetIpAddress($initialParam) }
         # Do a validity test and set the property.
         $this.IsValid = $this.GetValidity()
+        # If the configuration specifies that a "real name" is desired, fetch it. This requires validity.
+        $this.RealName = 
+            if($global:CliMonConfig.RealnameTranslation.Enabled -eq $True -And $this.IsValid -eq $True) {
+                $this.GetRealName()
+            } else { "" }
     }
 
     # Ensure the attributes of the instantiated object are valid, based on the parameter given to the constructor.
@@ -149,6 +156,41 @@ Class CliMonClient {
         if($null -ne $resolvedHostname) { $resolvedHostname = $resolvedHostname.ToUpper() }
         # Returns $null if no hostname could be resolved.
         return $resolvedHostname
+    }
+    # Get the "real name" of the client based on the configuration parameters.
+    [String] GetRealName() {
+        $local:indexType = $global:CliMonConfig.RealnameTranslation.IndexedBy
+        # Get the index value. If there's an incorrect value for the indexType, return an empty string.
+        if($local:indexType -eq "Hostname") {
+            $local:indexValue = $this.Hostname
+            $this.RealNameAlternative = $this.Hostname
+        } elseif($local:indexType -eq "IpAddress") {
+            $local:indexValue = $this.IpAddress
+            $this.RealNameAlternative = $this.IpAddress
+        } else {
+            $this.RealNameAlternative = $this.Hostname
+            return ""
+        }
+        $local:queryType = $global:CliMonConfig.RealnameTranslation.Method
+        if($local:queryType -eq "HTTPRequest") {
+            # Get the base URL, attempt to format it, and attempt to run the request.
+            $local:baseUrl = $global:CliMonConfig.RealnameTranslation.HTTPRequest.BaseUrl
+            try {
+                $local:fullUrl = $local:baseUrl -f $local:indexValue
+                $local:fetchedName = (New-Object System.Net.WebClient).DownloadString($local:fullUrl)
+                # OK to return the fetchedName because an empty string comes back if the request is bad.
+                #  If the URL ends up bad or otherwise unreachable, the try/catch should handle it.
+                return $local:fetchedName
+            } catch { return "" }
+        } elseif($local:queryType -eq "DirectObject") {
+            # Get the table from the config, search for the key/indexValue, and get the value in the table.
+            $local:directTable = $global:CliMonConfig.RealnameTranslation.DirectObject.Table
+            $local:fetchedName = $local:directTable."$($local:indexValue)"
+            return (if($null -eq $local:fetchedName) { "" } else { $local:fetchedName })
+        } else {
+            # If there's an invalid query type, return an empty string.
+            return ""
+        }
     }
 
     # A boolean function to return whether or not the client is a localhost client.

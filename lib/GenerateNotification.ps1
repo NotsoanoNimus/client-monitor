@@ -119,7 +119,7 @@ Function Write-CliMonNotification() {
                 #       using an assignment (=) operator to get a function value.
                 $local:finalClientSection = (Get-ClientNotificationSection `
                     -NotificationBody $local:BodyText_PerClient.ToString() `
-                    -ClientHostname $client.Hostname)  #[0].ToString()
+                    -TargetClient $client)  #[0].ToString()
                 [void]$BodyText_Container.Append($local:finalClientSection)
                 # Swap background colors. This is done within this 'if' because colors should only
                 #  be flipped when a client has something to write to the notification.
@@ -483,13 +483,13 @@ Function Get-ReachabilityChange() {
         # Build the return data from the values extracted above.
         [void]$local:returnData.Append("<div class='DiffsSection'>`nClient was <span class='")
         [void]$local:returnData.Append("$($global:CliMonConfig.Notifications.HTMLPriorValClass)")
-        [void]$local:returnData.Append("'>$clientWas</span>, and is now <span class='")
+        [void]$local:returnData.Append("'>$($local:clientWas)</span>, and is now <span class='")
         [void]$local:returnData.Append("$($global:CliMonConfig.Notifications.HTMLNewValClass)")
-        [void]$local:returnData.Append("'>$clientIs</span>.`n</div>")
+        [void]$local:returnData.Append("'>$($local:clientIs)</span>.`n</div>")
         # If for any reason the client is not reachable, finish up the section for the client.
         if($TargetClient.Profile.IsOnline -eq $False -Or $TargetClient.Profile.IsInvokable -eq $False) {
             [void]$local:returnData.Append((Get-ClientNotificationSection `
-                -NotificationBody $local:returnData.ToString() -ClientHostname $TargetClient.Hostname))
+                -NotificationBody $local:returnData.ToString() -TargetClient $TargetClient))
             Write-Debug -Message "The target is currently unreachable." -Threshold 2 -Prefix '>>>>>>'
         }
         # Return the "returnData" back to the global "wrapper".
@@ -554,8 +554,17 @@ Function Get-PrefilteredInstalledApps() {
 #  <hr /> tag.
 Function Get-ClientNotificationSection() {
     # NOTE: Be certain to cast all Append calls to VOID to prevent capturing multiple values.
-    param([String]$NotificationBody, [String]$ClientHostname)
+    param([String]$NotificationBody, [Object]$TargetClient)
     Write-Debug -Message "Building the client's notification section." -Threshold 1 -Prefix '>>'
+    # Check if realname translation is active.
+    if($global:CliMonConfig.RealnameTranslation.Enabled -eq $True) {
+        Write-Debug -Message "Client's Real Name: $($TargetClient.RealName)" -Threshold 1 -Prefix '>>>>'
+        $local:ClientName = $TargetClient.RealName
+    } else {
+        Write-Debug -Message ("Client RealName Translation is disabled. " +
+            "Using alternate name: $($TargetClient.RealNameAlternative)") -Threshold 1 -Prefix '>>>>'
+        $local:ClientName = $TargetClient.RealNameAlternative
+    }
     # Initialize a StringBuilder, feed it the string inside the template, and return it.
     $local:finalClientSection = [System.Text.StringBuilder]::new()
     [void]$local:finalClientSection.Append(
@@ -566,7 +575,7 @@ Function Get-ClientNotificationSection() {
     [void]$local:finalClientSection.Append(
         "#$($global:CliMonConfig.Notifications.HTMLBackgroundColors[$global:CliMonFlipColors]);'>")
     [void]$local:finalClientSection.Append(
-        "<h2>$ClientHostname</h2>`n$($NotificationBody)</td></tr></table>`n")
+        "<h2>$($local:ClientName)</h2>`n$($NotificationBody)</td></tr></table>`n")
     return $local:finalClientSection.ToString()
 }
 
