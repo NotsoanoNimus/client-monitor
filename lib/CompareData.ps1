@@ -101,7 +101,7 @@ Function Compare-EnvironmentDeltas() {
             $deltasObject.InvokableStatusChange -eq $True
         ) {
             # Add the deltasObject to the global tracking hashtable, indexed by client hostname.
-            Write-Host "---- Changes were detected for this client. Tracking." -ForegroundColor Magenta
+            Write-Host "---- Changes were detected for this client. Tracking." -ForegroundColor Yellow
             $global:CliMonDeltas.Add($client.Hostname, $deltasObject)
         }
     }

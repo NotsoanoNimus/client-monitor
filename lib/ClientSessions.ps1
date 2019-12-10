@@ -1,8 +1,8 @@
 <#
  # ClientSessions.ps1
  #
- # Get, start, and remove all Client Monitor sessions.
- #  This script provides many of the startup and teardown methods.
+ # Get, start, and remove all Client Monitor sessions via session-manager methods.
+ #  This script provides many of the critical startup and teardown functions.
  #>
 
 
@@ -68,22 +68,36 @@ Function Start-Sessions() {
         Write-Error "There was an issue starting the sessions: there were no valid clients in the provided source."
         exit 10
     }
+
     # Send out a single mass ping-check.
     Write-Debug -Message "Sending out a mass ping-check asynchronously." -Threshold 2 -Prefix '>>>>'
     $local:PingTasks = $global:CliMonClients.IpAddress | ForEach-Object {
-        [System.Net.NetworkInformation.Ping]::new().SendPingAsync($_)
+        [System.Net.NetworkInformation.Ping]::new().SendPingAsync(
+            $_,   #ping the target IP address
+            1500,   #a 1500ms timeout
+            (New-Object -TypeName Byte[] 32),   #a packet buffer of 32 bytes
+            ([System.Net.NetworkInformation.PingOptions]::new(30, $False))   #TTL of 30, no fragmentation
+        )
     }
-    [Threading.Tasks.Task]::WaitAll($PingTasks)
-
+    [Threading.Tasks.Task]::WaitAll($local:PingTasks)   #put the result into PingTasks.Result
+    Write-Debug -Message "Establishing all PSSession objects simultaneously." -Threshold 2 -Prefix '>>>>'
+    # Attempt to establish all sessions at once for all client hostnames.
+    # If a localhost client is present in the list, specifically use 127.0.0.1. Else, use hostname.
+    $local:targetClientNames = $global:CliMonClients | ForEach-Object {
+        if($_.IsLocalhost()) { '127.0.0.1' } else { $_.Hostname }
+    }
+    $local:attemptedSessions =
+        New-PSSession -ComputerName @($local:targetClientNames) -ErrorAction SilentlyContinue
     # Establish the sessions and set parameters/flags for each client in the list.
     foreach($client in $global:CliMonClients) {
         Write-Debug -Message "Examining client: $($client.Hostname)" -Threshold 3 -Prefix '>>>>>>'
-        $local:pingTestResult = $local:PingTasks.Result | Where-Object -Property Address -eq $client.IpAddress
+        $local:pingTestResult = $local:PingTasks.Result `
+            | Where-Object -Property Address -eq $client.IpAddress
         # If the ping is NOT successful...
         if($local:pingTestResult.Status -ne "Success") {
             Write-Debug -Message "The client is offline. Continuing to the next one." -Threshold 3 -Prefix '>>>>>>>>'
             # ... mark the client as offline; continue. 
-            #  These (False values) are default, but this is for sanity across this function.
+            #  These (False values) are default, but this is for sanity.
             $client.Profile.IsOnline = $False
             $client.Profile.IsInvokable = $False
             continue   #onto the next
@@ -91,34 +105,30 @@ Function Start-Sessions() {
             Write-Debug -Message "The client is online." -Threshold 3 -Prefix '>>>>>>>>'
             # The ping IS successful.
             $client.Profile.IsOnline = $True
-            $clientSession = $null
-            try {
-                Write-Debug -Message "Client is a Localhost client: $($client.IsLocalhost())" -Threshold 3 -Prefix '>>>>>>>>'
-                # Try to establish a session using the client's hostname, if the client isn't localhost.
+            $local:clientSession = 
                 if(-Not($client.IsLocalhost())) {
-                    Write-Debug -Message "Attempting a session with the client." -Threshold 3 -Prefix '>>>>>>>>'
-                    $clientSession = New-PSSession -ComputerName $client.Hostname -ErrorAction SilentlyContinue
-                }
-                # If it didn't work (but no error was caught), still keep things false appropriately.
-                if(-Not($client.IsLocalhost()) -And
-                  $clientSession -IsNot [System.Management.Automation.Runspaces.PSSession]) {
-                    Write-Debug -Message "The PSSession failed; client is NOT invokable." -Threshold 3 -Prefix '>>>>>>>>'
-                    $client.Profile.IsInvokable = $False
+                    ($local:attemptedSessions `
+                    | Where-Object -Property ComputerName -eq "$($client.Hostname)")
                 } else {
-                    Write-Debug -Message "The PSSession is established. Marking the client as reachable." -Threshold 3 -Prefix '>>>>>>>>'
-                    # Otherwise, set the ClientSession value, and show invokability is True.
-                    $client.ClientSession = $clientSession
-                    $client.Profile.IsInvokable = $True
-                    $client.SessionOpen = $True
+                    ($local:attemptedSessions `
+                    | Where-Object -Property ComputerName -eq "127.0.0.1")
                 }
-            } catch {
-                Write-Debug -Message "An error was caught during session establishment. Marking the client as unreachable." `
-                    -Threshold 3 -Prefix '>>>>>>>>'
+            # If the session is null or doesn't exist, the client doesn't have a session.
+            if($null -eq $local:clientSession) {
                 $client.Profile.IsInvokable = $False
+                continue
+            } else {
+                $client.ClientSession = $local:clientSession
+                $client.SessionOpen = $True
+                $client.Profile.IsInvokable = $True
             }
         }
     }
+    # Return nothing by default. This doesn't matter outside of the single-target mode.
+    return $null
 }
+
+
 
 # Called directly from the main method.
 #  Destroys/Hangs-up each established PS-Session for each client in this script.
@@ -153,6 +163,59 @@ Function Complete-Sessions() {
 
 
 
+# Refresh the session state of the target machine. If, for whatever reason, the session has
+#  closed where a previous session used to exist, then attempt to reopen it and provide the 
+#  global Client Monitor config.
+# This is only tried once each time it's discovered that a client's session has died.
+Function Assert-SessionState() {
+    param([Object]$TargetClient)
+    if($null -ne $TargetClient.ClientSession -And
+      $TargetClient.ClientSession.State -ne `
+      [System.Management.Automation.Runspaces.RunspaceState]::Opened) {
+        $local:successfulSession = $False
+        $local:clientSession = $null
+        # If the session state is NOT opened, but there was previously a session there,
+        #  attempt to establish a new session and repopulate the global configuration.
+        # This is effectively doing the same as Start-Sessions, but for a single client.
+        $local:pingTask = [System.Net.NetworkInformation.Ping]::new().SendPingAsync($_)
+        [System.Threading.Tasks.Task]::WaitAll($local:pingTask)
+        if($local:pingTestResult.Status -ne "Success") {
+            $TargetClient.Profile.IsOnline = $False
+            $local:successfulSession = $False
+        } else { $TargetClient.Profile.IsOnline = $True }
+        if($TargetClient.IsLocalhost() -eq $True -And $global:CliMonIsAdmin -eq $False) {
+            $local:successfulSession = $False
+        }
+        $local:clientSession =
+            if(-Not($TargetClient.IsLocalhost())) {
+                New-PSSession -ComputerName $TargetClient.Hostname -ErrorAction SilentlyContinue
+            } else {
+                New-PSSession '127.0.0.1' -ErrorAction SilentlyContinue
+            }
+        if($local:clientSession -IsNot [System.Management.Automation.Runspaces.PSSession] -Or
+            $local:clientSession.State -ne [System.Management.Automation.Runspaces.RunspaceState]::Opened) {
+            $local:successfulSession = $False
+        } else { $local:successfulSession = $True }
+        # Check if a successful session was established, and if so, capture it.
+        #  Otherwise, set the client as dead/uninvokable.
+        if($local:successfulSession -eq $True) {
+            $TargetClient.Profile.IsInvokable = $True
+            $TargetClient.ClientSession = $local:clientSession
+            $TargetClient.SessionOpen = $True
+            # Refresh the global variables within the client session.
+            #  NOTE: This line is the reason that the "NoRefresh" switch is necessary
+            #         within the Complete-RemoteOperations function, to prevent cascading errors.
+            Set-AllClientConfigurationVariables -Clients @($TargetClient)
+        } else {
+            $TargetClient.Profile.IsInvokable = $False
+            $TargetClient.ClientSession = $null
+            $TargetClient.SessionOpen = $False
+        }
+    }
+}
+
+
+
 # Return a list of the clients that will be targeted, based on the Client Monitor ClientsList parameter.
 #  This can either use the explicit parameter, or an MSAD-based list of users.
 Function Get-TargetClients() {
@@ -180,5 +243,55 @@ Function Get-TargetClients() {
         }
         Write-Debug -Message "Collecting line-by-line clients from: $ClientsList" -Threshold 2 -Prefix '>>>>'
         return (Get-Content $ClientsList)
+    }
+}
+
+
+
+# Complete the given ScriptBlock ($Actions) on all valid remote sessions simultaneously.
+#
+# A return value of $null implies there was an issue executing the ScriptBlock on the clients,
+#  from the scope of the Complete-RemoteOperations command itself (not within a session).
+#
+# If the $NoRefresh flag is set, the "Assert-Session" function will not be called.
+#  This is used in conjunction with the config import function to prevent endless loops.
+Function Complete-RemoteOperations() {
+    param([Object[]]$Clients, [ScriptBlock]$Actions,
+        [Array]$Arguments, [Switch]$NoRefresh = $False)
+    # Cast the clients array to a flexible list type.
+    $local:clientsList = [System.Collections.ArrayList]$Clients
+    # Go through the list of clients and see if the session state is broken or disconnected.
+    $local:origClientsLength = $Clients.Count
+    for($i = 0; $i -lt $local:origClientsLength; $i++) {
+        $client = $Clients[$i]
+        if($null -eq $client) { continue }
+        if($client.ClientSession.State `
+          -ne [System.Management.Automation.Runspaces.RunspaceState]::Opened) {
+            # Usually the $NoRefresh switch will only be set to prevent loops.
+            if($NoRefresh -eq $False -And $client.ClientSession.State) {
+                Assert-SessionState -TargetClient $client
+            } elseif($NoRefresh -eq $True) {
+                $client.ClientSession = $null
+                $client.SessionOpen = $False
+            }
+            # If the session couldn't be re-established, pop the client off the target stack.
+            #  Despite this being a modification of a reference, this is actually preferred since
+            #  usually the Clients parameter will not reference the global CliMonClients array.
+            if($client.SessionOpen -eq $False) {
+                Write-Host ("~~~~ Couldn't maintain a valid session with client " +
+                    "'$($client.Hostname)'. Ignoring this client.")
+                $local:clientsList.RemoveAt($i)
+            }
+        }
+    }
+    $local:Sessions = $local:clientsList.ClientSession
+    try {
+        $local:returnValue = Invoke-Command -ScriptBlock $Actions `
+            -Session $local:Sessions -ArgumentList $Arguments
+        # There should be processing here to capture results or other errors.
+        return $local:returnValue
+    } catch {
+        Write-Error "~~~~ Could not execute the queries for the given sessions."
+        return $null
     }
 }

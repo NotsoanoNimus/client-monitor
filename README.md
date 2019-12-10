@@ -140,7 +140,7 @@ Recently, the script has been given the ability to provide two valuable pieces o
 - [ ] Information limitation. Runs of Client Monitor (particularly the "new" version) have not been tested in environments where the clients list is greater than about 60 targets or so.
   - The fear is that too many clients may cause excess resource usage, and thus a crash or gross miscalculation, based on all of the large data permutations being performed and collected into objects -- particularly piped or chained commands.
   - This could perhaps be implemented in a "step-by-step" client parsing method: the script could run through a batch of 20 targets at a time for a whole "data cycle", then circle back to the top of the Main function, but with 20 more targets, _ad infinitum_ until the targets list is exhausted.
-- [ ] More **asynchronous tasking**. Commands to client sessions can be run simultaneously, which could greatly improve the speed of the script during the "Gathering" stage when data is being collected.
+- [X] More **asynchronous tasking**. Commands to client sessions can be run simultaneously, which could greatly improve the speed of the script during the "Gathering" stage when data is being collected.
 
 And of course: send suggestions and report any bugs you come across! I'd be happy to take them.
 

@@ -150,8 +150,8 @@ if($global:CliMonConfig.ConfigImported -ne $True) {
 #  command line parameters (like DeltasReport) with every single call.
 # I left my mess here as a demonstration of how simple it is to make "permanent" tweaks
 #  to some of the parameters a user might otherwise have to pass in every time.
-#$Debug = 5
-#$ClientsList = 'C:\Client-Monitor\clients.txt'
+#$global:CliMonConfig.Verbosity = 5
+#$ClientsList = 'C:\temp\clients.txt'
 #$CompressJSON = $False
 #$DeltasReport = $True
 #$SnapshotMode = $True

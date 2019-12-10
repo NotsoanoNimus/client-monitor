@@ -156,10 +156,11 @@ Function Update-ScriptConfiguration() {
                 -FilePath "$($global:CliMonConfig.Notifications.InstallationChanges.ReportLocation)"
         }
     }
-    # Check for an empty DomainSuffix. If it's empty, use the COMPUTERNAME environment variable instead.
+    # Check for an empty DomainSuffix. If it's empty, use the default 'localdomain' instead.
     if($global:CliMonConfig.DomainSuffix -eq "" -Or $null -eq $global:CliMonConfig.DomainSuffix) {
-        $global:CliMonConfig.DomainSuffix = ".$($env:COMPUTERNAME)"
-        Write-Debug -Message "The DomainSuffix configuration is blank; using '.$env:COMPUTERNAME'" -Threshold 2 -Prefix '>>>>'
+        $global:CliMonConfig.DomainSuffix = ".localdomain"
+        Write-Debug -Message "The DomainSuffix configuration is blank; using '.localdomain'" `
+            -Threshold 2 -Prefix '>>>>'
     }
     # Populate the DomainSuffix regex field.
     $global:CliMonConfig.DomainSuffixRegex =
@@ -172,10 +173,10 @@ Function Update-ScriptConfiguration() {
         Write-Debug -Message "Overriding configuration for DomainUserFilter: `"$DomainUserFilter`"" -Threshold 2 -Prefix '>>>>'
         # If the DomainUserFilter is present under the notifications variables, replace it.
         @("ChangesBodyHeader", "NoChangeBodyText", "HTMLWrapper") | ForEach-Object {
-            $global:CliMonConfig.Notifications.$_ =
-                ($global:CliMonConfig.Notifications.$_ -Replace `
-                [Regex]::Escape($global:CliMonConfig.DomainUserFilter), `
-                "$DomainUserFilter")
+            $global:CliMonConfig.Notifications."$_" =
+                ($global:CliMonConfig.Notifications."$_" -Replace `
+                "<span id='query'>$([Regex]::Escape("$($global:CliMonConfig.DomainUserFilter)"))</span>", `
+                "<span id='query'>$DomainUserFilter</span>")
         }
         # Finally, set the user filter override.
         $global:CliMonConfig.DomainUserFilter = $DomainUserFilter
@@ -200,75 +201,77 @@ Function Update-ScriptConfiguration() {
 Function Invoke-CliMonCleanup() {
     param([Switch]$TrappedError = $False)
     Write-Debug -Message "Running Client Monitor cleanup tasks." -Threshold 1 -Prefix '>>'
-    if(($TrappedError -eq $True -And $global:CliMonConfig.NoRevert -eq $False) -Or
-      $Ephemeral -eq $True) {
-        if($Ephemeral -eq $False) {
-            Write-Host ("~~ A critical error was encountered." +
-                " Reverting all client reports and trackers for this session.")
-        } elseif($Ephemeral -eq $True) {
-            Write-Host ("-- The script was running in Ephemeral Mode. Reverting all client reports" +
-                " and trackers for this session.")
-        }
-        Write-Debug -Message "The script appears to have exited in error or in a temporary state." -Threshold 2 -Prefix '>>>>'
-        if($global:CliMonEmailFailure -eq $True) {
-            Write-Host "~~~~ The email notification failed to dispatch. Please check your settings."
-            Write-Host "~~~~ SMTP Error Description: $($global:CliMonEmailErrorText)"
-        }
-        # If ephemeral is NOT engaged, and NoRevert is True, do NOT remove the reports.
-        if($Ephemeral -eq $False -And $global:CliMonConfig.NoRevert -eq $True) { return }
-        # An error was trapped in some way. Remove any reports generated in this session.
-        Write-Debug -Message "Removing reports generated in this session." -Threshold 2 -Prefix '>>>>'
-        $global:CliMonGeneratedReports | ForEach-Object {
-            Write-Debug -Message "Report: $_" -Threshold 3 -Prefix '>>>>>>'
-        }
-        foreach($report in $global:CliMonGeneratedReports) {
-            # Check for the file's existence, then try to delete it.
-            if(Test-Path $report) {
-                try {
-                    Remove-Item -Path $report -Force
-                    Write-Debug -Message "Report '$report' removed." -Threshold 3 -Prefix '>>>>>>'
-                } catch { }
+    try {
+        if(($TrappedError -eq $True -And $global:CliMonConfig.NoRevert -eq $False) -Or
+        $Ephemeral -eq $True) {
+            if($Ephemeral -eq $False) {
+                Write-Host ("~~ A critical error was encountered." +
+                    " Reverting all client reports and trackers for this session.")
+            } elseif($Ephemeral -eq $True) {
+                Write-Host ("-- The script was running in Ephemeral Mode. Reverting all client reports" +
+                    " and trackers for this session.")
             }
-        }
-    } else {
-        Write-Debug -Message "The script appears to have exited normally." -Threshold 2 -Prefix '>>>>'
-        # If the MaxReportRetentionHours setting is set to zero (or less), reports don't get cleaned.
-        if($global:CliMonConfig.MaxReportRetentionHours -gt 0) {
-            # Delete reports in the ReportsDirectory that exceed the age threshold.
-            Write-Host "-- Removing reports that have aged beyond $($global:CliMonConfig.MaxReportRetentionHours) hours."
-            # Get the current time that matches the filename format for reports.
-            $local:todaysDate = ((Get-Date -UFormat %Y-%m-%d-%H_%M).ToString())
-            # Get the list of Report-*.txt files in the Reports Directory
-            $local:reportFiles = (Get-ChildItem -Path `
-                "$($global:CliMonConfig.ReportsDirectory)").Name -ILike 'Report-*.txt'
-            # Go through each report file, extract the date from the name, and test it for expiration.
-            foreach($report in $local:reportFiles) {
-                Write-Debug -Message "Examining report: $report" -Threshold 3 -Prefix '>>>>'
-                $report -Match '-(\d{4}-\d{2}-\d{2}-\d{2}_\d{2}).txt$' | Out-Null
-                # If the extracted match's date is beyond the expiration timer, delete the file.
-                if((Get-DateDeltaHours -moreRecentDate $local:todaysDate `
-                  -lessRecentDate "$($matches[1])") -ge $global:CliMonConfig.MaxReportRetentionHours) {
-                    Remove-Item -Confirm:$False -Force -Path `
-                        "$($global:CliMonConfig.ReportsDirectory)\$report"
-                    Write-Host "---- Removed aged report: $report"
+            Write-Debug -Message "The script appears to have exited in error or in a temporary state." -Threshold 2 -Prefix '>>>>'
+            if($global:CliMonEmailFailure -eq $True) {
+                Write-Host "~~~~ The email notification failed to dispatch. Please check your settings."
+                Write-Host "~~~~ SMTP Error Description: $($global:CliMonEmailErrorText)"
+            }
+            # If ephemeral is NOT engaged, and NoRevert is True, do NOT remove the reports.
+            if($Ephemeral -eq $False -And $global:CliMonConfig.NoRevert -eq $True) { return }
+            # An error was trapped in some way. Remove any reports generated in this session.
+            Write-Debug -Message "Removing reports generated in this session." -Threshold 2 -Prefix '>>>>'
+            $global:CliMonGeneratedReports | ForEach-Object {
+                Write-Debug -Message "Report: $_" -Threshold 3 -Prefix '>>>>>>'
+            }
+            foreach($report in $global:CliMonGeneratedReports) {
+                # Check for the file's existence, then try to delete it.
+                if(Test-Path $report) {
+                    try {
+                        Remove-Item -Path $report -Force
+                        Write-Debug -Message "Report '$report' removed." -Threshold 3 -Prefix '>>>>>>'
+                    } catch { }
+                }
+            }
+        } else {
+            Write-Debug -Message "The script appears to have exited normally." -Threshold 2 -Prefix '>>>>'
+            # If the MaxReportRetentionHours setting is set to zero (or less), reports don't get cleaned.
+            if($global:CliMonConfig.MaxReportRetentionHours -gt 0) {
+                # Delete reports in the ReportsDirectory that exceed the age threshold.
+                Write-Host "-- Removing reports that have aged beyond $($global:CliMonConfig.MaxReportRetentionHours) hours."
+                # Get the current time that matches the filename format for reports.
+                $local:todaysDate = ((Get-Date -UFormat %Y-%m-%d-%H_%M).ToString())
+                # Get the list of Report-*.txt files in the Reports Directory
+                $local:reportFiles = (Get-ChildItem -Path `
+                    "$($global:CliMonConfig.ReportsDirectory)").Name -ILike 'Report-*.txt'
+                # Go through each report file, extract the date from the name, and test it for expiration.
+                foreach($report in $local:reportFiles) {
+                    Write-Debug -Message "Examining report: $report" -Threshold 3 -Prefix '>>>>'
+                    $report -Match '-(\d{4}-\d{2}-\d{2}-\d{2}_\d{2}).txt$' | Out-Null
+                    # If the extracted match's date is beyond the expiration timer, delete the file.
+                    if((Get-DateDeltaHours -moreRecentDate $local:todaysDate `
+                    -lessRecentDate "$($matches[1])") -ge $global:CliMonConfig.MaxReportRetentionHours) {
+                        Remove-Item -Confirm:$False -Force -Path `
+                            "$($global:CliMonConfig.ReportsDirectory)\$report"
+                        Write-Host "---- Removed aged report: $report"
+                    }
+                }
+            }
+            # If application auto-tracking is enabled, set the content of the report to the newly-tracked
+            #  InstalledApps that had a version change.
+            if($global:CliMonConfig.Notifications.InstallationChanges.Enabled -eq $True) {
+                # If there were changes to the automatic tracking file, record them.
+                if($global:CliMonAutoTrackingIndexChanged -eq $True) {
+                    Write-Host "-- Saving updated installed application trackers."
+                    ($global:CliMonUpdatedApplicationTrackingFilters | ConvertTo-Json) `
+                        | Set-Content -Force -Path `
+                        $global:CliMonConfig.Notifications.InstallationChanges.ReportLocation
                 }
             }
         }
-        # If application auto-tracking is enabled, set the content of the report to the newly-tracked
-        #  InstalledApps that had a version change.
-        if($global:CliMonConfig.Notifications.InstallationChanges.Enabled -eq $True) {
-            # If there were changes to the automatic tracking file, record them.
-            if($global:CliMonAutoTrackingIndexChanged -eq $True) {
-                Write-Host "-- Saving updated installed application trackers."
-                ($global:CliMonUpdatedApplicationTrackingFilters | ConvertTo-Json) `
-                    | Set-Content -Force -Path `
-                    $global:CliMonConfig.Notifications.InstallationChanges.ReportLocation
-            }
-        }
-    }
+    } catch { }
     # Regardless of either outcome, clean up ANY custom variables as needed.
-    Remove-Variable * -ErrorAction SilentlyContinue
-    $error.Clear()
+    Remove-Variable -Name * -Force -ErrorAction SilentlyContinue
+    $Error.Clear()
     # Regardless of the exit type, if the global timer is running, stop it.
     if($global:CliMonGenTimer.IsRunning -eq $True) { $global:CliMonGenTimer.Stop() }
 }
@@ -304,5 +307,44 @@ Function Write-Debug() {
         & Write-Host "$($Prefix) " -ForegroundColor Cyan -BackgroundColor Black -NoNewline
         # Finally, write the message.
         & Write-Host "$Message" -ForegroundColor Magenta -BackgroundColor Black
+    }
+}
+
+
+
+# Get the contents of the debug log buffer, empty it into STDOUT, and make sure it's cleaned up.
+#  The contents of the buffer will be acquired by a brief remote invocation. This uses just the
+#  Invoke-Command cmdlet since it's not done simultaneously, by design.
+Function Get-ClientDebugLog() {
+    param([Object]$TargetClient)
+    if($global:CliMonConfig.Verbosity -le 0 -Or $TargetClient.IsLocalhost()) { return }
+    Write-Host "Debug output for client with hostname: " -NoNewline -ForegroundColor Magenta
+    Write-Host "$($TargetClient.Hostname)" -ForegroundColor Cyan
+    try {
+        $local:remoteDebugBuffer = Invoke-Command -Session $TargetClient.ClientSession `
+        -ScriptBlock { return $global:CliMonDebugBuffer }
+        # For each string in the remote debug buffer, break it apart into cutesy colored strings.
+        foreach($line in $local:remoteDebugBuffer) {
+            # Remote debug lines format: <time> [threshold] {name} PREFIX MESSAGE
+            if($line -Match '^\s*\<(?<Timestamp>[^>]+)\>\s+\[(?<Threshold>\d+)\]\s+\{(?<RemoteName>[^\}]+)\}\s+(?<Prefix>[^ ]+)\s+(?<Message>.*?)$') {
+                # Write a line such as: TIMESTAMP [4] [WKSTN095.WORK.LOCAL] >>>> message here
+                Write-Host "$($Matches.Timestamp) " `
+                    -ForegroundColor DarkCyan -BackgroundColor Black -NoNewline
+                Write-Host "[$($Matches.Threshold)] " `
+                    -ForegroundColor Yellow -BackgroundColor Black -NoNewline
+                Write-Host "[$($Matches.RemoteName)] " `
+                    -ForegroundColor White -BackgroundColor Black -NoNewline
+                Write-Host "$($Matches.Prefix) " `
+                    -ForegroundColor Cyan -BackgroundColor Black -NoNewline
+                Write-Host "$($Matches.Message)" `
+                    -ForegroundColor Magenta -BackgroundColor Black
+            }
+        }
+        # Clear the remote debug buffer from the client now that valid lines were printed.
+        Invoke-Command -Session $TargetClient.ClientSession `
+            -ScriptBlock { $global:CliMonDebugBuffer = @() }
+    } catch {
+        Write-Host "~~ Unable to process the debug log for host: " -NoNewline
+        Write-Host "$($TargetClient.Hostname)" -ForegroundColor Cyan
     }
 }

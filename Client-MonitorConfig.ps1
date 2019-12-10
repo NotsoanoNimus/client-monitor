@@ -41,12 +41,10 @@ $global:CliMonConfig = @{
 	#  If this is not defined, The $env:COMPUTERNAME variable will be used instead.
 	DomainName = "TSP"
 	# The internal domain suffix of the given/extracted hostnames. If this is left blank, then the
-	#  self-referential "COMPUTERNAME" environment variable will be populated later. If you are
-	#  using Active Directory, PLEASE SET THIS VALUE APPROPRIATELY!
+	#  self-referential '.localdomain' suffix name will be populated later. If you are using
+	#  Active Directory, PLEASE SET THIS VALUE APPROPRIATELY!
 	# Luckily, ping tests and connection tests are done directly by IP address instead of hostname.
 	DomainSuffix = '.thestraightpath.local'
-	DomainSuffixRegex = ""   #set in the script initialization.
-		
 
 	# MSAD username filter: which clients to collect when running the Get-ADComputer command
 	#  (if not supplying a list via the ClientsList parameter).
@@ -408,7 +406,8 @@ $global:CliMonConfig.Notifications.HTMLWrapper = @"
 #  The actual Body text is appended to this value later, forming the [[BODYTEXT]]
 #  for the HTML wrapper.
 $global:CliMonConfig.Notifications.ChangesBodyHeader = ("<h1>Summary of Environment Changes</h1>`n`n" +
-	"<p class='SummaryText'><b><u>QUERY</u></b>: '$($global:CliMonConfig.DomainUserFilter)'" +
+	"<p class='SummaryText'><b><u>QUERY</u></b>: " +
+	"$(if($DomainUserFilter -eq ''){$global:CliMonConfig.DomainUserFilter}else{$DomainUserFilter})" +
 	"</p>`n<p class='SummaryText'>There were changes detected on the network for the" +
 	" following clients. Anything in <span class='" +
 	"$($global:CliMonConfig.Notifications.HTMLPriorValClass)'>red</span> is a removed " +
@@ -417,7 +416,8 @@ $global:CliMonConfig.Notifications.ChangesBodyHeader = ("<h1>Summary of Environm
 
 # A preformatted template for notifications when there is no change to any clients.
 $global:CliMonConfig.Notifications.NoChangeBodyText = ("<h1 class='NoChangeHeader'>No Client Changes</h1>`n" +
-	"<p class='SummaryText'><b><u>FILTER QUERY</u></b>: " +
-	"`"$($global:CliMonConfig.DomainUserFilter)`"</p>`n<p class='SummaryText'>There were" +
+	"<p class='SummaryText'><b><u>QUERY</u></b>: " +
+	"$(if($DomainUserFilter -eq ''){$global:CliMonConfig.DomainUserFilter}else{$DomainUserFilter})" +
+	"</p>`n<p class='SummaryText'>There were" +
 	" no changes to display for the client machines.<br />`nEither the items that <i>did</i>" +
 	" change were filtered, or nothing has changed at all.</p>");

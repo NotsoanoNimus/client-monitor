@@ -35,6 +35,7 @@
 $global:ClientMonitorRegexes = @{
     'HOSTNAME' = '^(?!\d+$)[a-zA-Z0-9\-_\\]+$';
     'HOSTNAME_WITH_SUFFIX' = '^[a-zA-Z0-9][a-zA-Z0-9\._\-]+\.[a-z0-9\-_]{2,}$';
+    'LOCALHOST_HOSTNAME' = "^(LOCALHOST([0-9]|\.localdomain)?|$([Regex]::Escape($env:COMPUTERNAME)))$";
     'IPV4_ADDRESS' = '\b((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(\.|$)){4}\b';
     'SID' = '^S-\d+-\d+-\d+-';
 }
@@ -66,6 +67,14 @@ Class CliMonClient {
     CliMonClient([String]$initialParam) {
         # Pre-filter anything prefixed by one or two backslashes. Just strip it out.
         $initialParam = $initialParam -Replace '^\\{1,2}'
+        # If the initial parameter matches a localhost-type hostname, set the hostname to either the
+        #  COMPUTERNAME environment variable, or to 'localdomain', depending on the global domain suffix.
+        # If a suffix is configured that's NOT localdomain, the COMPUTERNAME variable is likely to work best.
+        if($initialParam -imatch $global:ClientMonitorRegexes['LOCALHOST_HOSTNAME']) {
+            $initialParam = 
+                if($global:CliMonConfig.DomainSuffix -eq '.localdomain') { 'localhost' }
+                else { "$env:COMPUTERNAME" }
+        }
         # This constructor can be fed any string, which will be tested for either a hostname or an IPV4 address.
         #  It will then flesh out the client accordingly.
         $this.Hostname =
@@ -106,7 +115,7 @@ Class CliMonClient {
         #  This is not desired at this time, so instead fetch the first IPv4 address in the array.
         if($resolvedAddress -Is [Array] -And $resolvedAddress.Length -gt 1) {
             $finalIp = ""
-            if($givenHostname -inotmatch "^(LOCALHOST|$env:COMPUTERNAME)") {
+            if($givenHostname -inotmatch $global:ClientMonitorRegexes['LOCALHOST_HOSTNAME']) {
                 $resolvedAddress | ForEach-Object {
                     if($_ -match '^[0-9\.]+$' -And $_ -notmatch '^127\.|^22[4-9]\.|^2[3-5][0-9]\.|^169\.254\.') {
                         # Stops at the final match of an actual IP address that isn't 
@@ -196,14 +205,11 @@ Class CliMonClient {
     [Hashtable] RemoteCommand([ScriptBlock]$Commands, [Array]$Arguments) {
         try {
             $returnValue = 
-                if($this.IsLocalhost()) {
-                    # A localhost invocation will not use a session.
-                    Invoke-Command -ScriptBlock $Commands -ArgumentList $Arguments
-                } elseif($this.SessionOpen -eq $True) {
+                if($this.SessionOpen -eq $True) {
                     # Any remote invocation will involve the established session.
                     Invoke-Command -Session $this.ClientSession `
                     -ScriptBlock $Commands -ArgumentList $Arguments
-                } else { Throw("The method to invoke the remote command could not be determined.") }
+                } else { Throw("The client session is not available for $($this.Hostname).") }
             return [Object]@{Success = $True; Result = $returnValue}
         } catch {
             Write-Host "~~~~ Error caught during remote command: $_" -ForegroundColor Red
@@ -237,23 +243,23 @@ Function Get-CliMonClientUnique() {
     [cmdletbinding()]
     param([CliMonClient[]][Parameter(Mandatory=$True,ValueFromPipeline=$True)]$instancesList)
     Begin {
-        $returnArray = @()
-        $uniqueHostnames = @()
-        $uniqueIpAddresses = @()
+        $local:returnArray = @()
+        $local:uniqueHostnames = @()
+        $local:uniqueIpAddresses = @()
     }
     Process {
         foreach($instance in $instancesList) {
             if($instance -IsNot [CliMonClient]) {
                 Write-Error ("An instance in the passed parameter was not a CliMonClient object!")
                 return
-            } elseif(-Not($uniqueHostnames.Contains($instance.Hostname)) -And
-              -Not($uniqueIpAddresses.Contains($instance.IpAddress))) {
+            } elseif(($local:uniqueHostnames -INotContains $instance.Hostname) -And
+              ($local:uniqueIpAddresses -INotContains $instance.IpAddress)) {
                 # If the instance's hostname and IP are NOT in the list, add them and append it.
-                $uniqueHostnames += $instance.Hostname
-                $uniqueIpAddresses += $instance.IpAddress
-                $returnArray += $instance
+                $local:uniqueHostnames += $instance.Hostname
+                $local:uniqueIpAddresses += $instance.IpAddress
+                $local:returnArray += $instance
             }
         }
     }
-    End { return $returnArray }
+    End { return $local:returnArray }
 }

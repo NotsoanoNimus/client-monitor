@@ -81,6 +81,16 @@ $global:CliMonEmailFailure = $False
 # If there was an email failure, this text should be set with the error.
 $global:CliMonEmailErrorText = $null
 
+# A trash bin for any extra variables that have no real purpose outside of special-use cases.
+$global:CliMonTrashBin = @{}
+
+# Get a flag stating whether or not the user running the script is a local administrator. This 
+#  determines whether or not the script will allow "localhost" clients to be included in the
+#  final list of "valid" clients.
+$local:currentPrincipal = New-Object Security.Principal.WindowsPrincipal(
+    [Security.Principal.WindowsIdentity]::GetCurrent())
+$global:CliMonIsAdmin = 
+    $local:currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
 # Set the "ImportedDependencies" variable to True once all imports have completed.
 $ImportedDependencies = $True
