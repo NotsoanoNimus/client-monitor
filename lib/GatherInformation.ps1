@@ -722,7 +722,15 @@ Function Get-AllClientProfiles() {
                 $local:extractedProfile = $local:results `
                     | Where-Object -Property PSComputerName -eq "127.0.0.1"
             }
+            # BUGFIX - 20191213
+            #   WHAT: Bug was causing clients going from unreachable to reachable to lose the status changes.
+            # Preserve the invokable and online status changes before applying the returned profile.
+            $local:onlineStatusChangePreserve = $client.Profile.OnlineStatusChange
+            $local:invokableStatusChangePreserve = $client.Profile.InvokableStatusChange
+            # Assign the profile to the return variable then reapply the status change variables.
             $client.Profile = $local:extractedProfile
+            $client.Profile.OnlineStatusChange = $local:onlineStatusChangePreserve
+            $client.Profile.InvokableStatusChange = $local:invokableStatusChangePreserve
         }
     }
 }
