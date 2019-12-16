@@ -231,8 +231,7 @@ Class CliMonClient {
 # Wrapper method to return a groups of CliMonClient instances, built from an array of strings.
 Function Get-ClientInstances() {
     param([Array]$FromArray)
-    $clientObjects = @()
-    $FromArray | ForEach-Object { $clientObjects += [CliMonClient]::new($_) }
+    $clientObjects = $FromArray | ForEach-Object { [CliMonClient]::new($_) }
     return [CliMonClient[]]$clientObjects
 }
 

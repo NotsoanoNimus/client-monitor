@@ -177,7 +177,7 @@ Function Assert-SessionState() {
         # If the session state is NOT opened, but there was previously a session there,
         #  attempt to establish a new session and repopulate the global configuration.
         # This is effectively doing the same as Start-Sessions, but for a single client.
-        $local:pingTask = [System.Net.NetworkInformation.Ping]::new().SendPingAsync($_)
+        $local:pingTask = [System.Net.NetworkInformation.Ping]::new().SendPingAsync($TargetClient.IpAddress)
         [System.Threading.Tasks.Task]::WaitAll($local:pingTask)
         if($local:pingTestResult.Status -ne "Success") {
             $TargetClient.Profile.IsOnline = $False
