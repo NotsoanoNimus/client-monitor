@@ -509,13 +509,21 @@ Function Get-PrefilteredInstalledApps() {
     if($global:CliMonConfig.Notifications.InstallationChanges.Enabled -eq $False -Or
       -Not ($global:CliMonConfig.TrackedValues.InstalledApps.Contains("DisplayName") -And
       $global:CliMonConfig.TrackedValues.InstalledApps.Contains("DisplayVersion"))) { return @() }
-    # Once again, read in the InstalledAppsTracker using the global method.
-    try {
-        $local:prefilterTrackers = Get-InstalledAppsTrackerContents
-    } catch {
-        $local:prefilterTrackers = (@{} | ConvertTo-Json)
-        Write-Host ("~~~~ Automatic application tracking is enabled but the ReportLocation" +
-            " couldn't be read. No applications will be tracked.")
+    # Set up the trackers using the updated information from the "Compare" stage of the script.
+    if($null -ne $global:CliMonUpdatedApplicationTrackingFilters -And
+      ($global:CliMonUpdatedApplicationTrackingFilters `
+      | Get-Member -Type NoteProperty).Name.Count -gt 0) {
+        $local:prefilterTrackers = $global:CliMonUpdatedApplicationTrackingFilters
+    } else {
+        # If the "updated" tracking filters from the previous step were not given content, try
+        #  to instead get the trackers from the tracker file at the very least.
+        try {
+            $local:prefilterTrackers = Get-InstalledAppsTrackerContents
+        } catch {
+            $local:prefilterTrackers = (@{} | ConvertTo-Json)
+            Write-Host ("~~~~ Automatic application tracking is enabled but the ReportLocation" +
+                " couldn't be read. No applications will be tracked.")
+        }
     }
     if($null -ne $local:prefilterTrackers -And
       ($local:prefilterTrackers | Get-Member -Type NoteProperty).Name.Count -gt 0) {
