@@ -32,7 +32,6 @@
 #  and generate/output the client reports.
 Function Get-CurrentEnvironment() {
     Write-Host "`n`n`nGathering all client information and populating profiles." -ForegroundColor Green
-    $local:reachableClients = @()
     foreach($client in $global:CliMonClients) {
         # The 'client' variable is always passed as a reference/pointer, so it can be
         #  modified WITHOUT copying the data and returning the manipulated copy.
@@ -49,17 +48,32 @@ Function Get-CurrentEnvironment() {
             Write-Host "~~ Skipping client $($client.Hostname): failed to establish a session."
         }
     }
+    # This needs to be procedurally called as a function so it's easy to return/break from if
+    #  for some reason all sessions completely break (which could caused by a connection issue 
+    #  from the host of the script itself, most likely).
+    Get-AllClientInformation
+    # If enabled, generate the flat report CSV as an aggregate report of all Client Profiles.
+    if($FlatReportCsv -eq $True) { Write-CliMonFlatReport }
+}
+
+
+
+# Main wrapper for gathering all information from the client machines.
+Function Get-AllClientInformation() {
     # This line will be run between each call to the information gathering functions below,
     #  in the event that a client becomes unreachable and needs to be plucked from the table
     #  of reachable clients. This is acceptable since it's using a very fast method to fetch
     #  the list of clients with open sessions.
     $local:reachableClients = $global:CliMonClients | Where-Object { $_.SessionOpen -eq $True }
+    if($local:reachableClients.Count -le 0) { return }
     Set-AllClientConfigurationVariables -Clients $local:reachableClients
     # Mount the registry endpoints for each user on the remote machine.
     $local:reachableClients = $global:CliMonClients | Where-Object { $_.SessionOpen -eq $True }
+    if($local:reachableClients.Count -le 0) { return }
     Mount-AllUserHives -Clients $local:reachableClients
     # Fill out the $client.Profile variable.
     $local:reachableClients = $global:CliMonClients | Where-Object { $_.SessionOpen -eq $True }
+    if($local:reachableClients.Count -le 0) { return }
     Get-AllClientProfiles -Clients $local:reachableClients
     # Filename tracking must be done AFTER getting the client profile, due to the way
     #  the profile is returned from the remote session in the previous step.
@@ -69,16 +83,17 @@ Function Get-CurrentEnvironment() {
         #  the other Profile items, and is thus much different.
         # This is mostly for the ease of maintenance and bugfixes.
         $local:reachableClients = $global:CliMonClients | Where-Object { $_.SessionOpen -eq $True }
+        if($local:reachableClients.Count -le 0) { return }
         Get-AllClientTrackedFiles -Clients $local:reachableClients
     }
     # Write the client Profile objects to individual JSON reports.
     $local:reachableClients = $global:CliMonClients | Where-Object { $_.SessionOpen -eq $True }
+    if($local:reachableClients.Count -le 0) { return }
     Write-AllClientReports -Clients $local:reachableClients -FinalCall
     # Unmount any user hives that were mounted earlier, within each session.
     $local:reachableClients = $global:CliMonClients | Where-Object { $_.SessionOpen -eq $True }
+    if($local:reachableClients.Count -le 0) { return }
     Remove-AllUserHives -Clients $local:reachableClients
-    # If enabled, generate the flat report CSV as an aggregate report of all Client Profiles.
-    if($FlatReportCsv -eq $True) { Write-CliMonFlatReport }
 }
 
 
@@ -113,10 +128,8 @@ Function Get-ClientStatus() {
     #  Otherwise, just track the reachability change and move forward.
     if($TargetClient.Profile.IsOnline -eq $False -Or
       $TargetClient.Profile.IsInvokable -eq $False) {
-        Write-Host ("**** A session couldn't be established to the client; " +
-            "new changes cannot be tracked.")
-        Write-Host ("****  Copying the most recent report (if it exists) forward " +
-            "to preserve the client's last known state.")
+        Write-Host ("**** A session couldn't be established to the client; new changes cannot be tracked.")
+        Write-Host ("****  Copying the most recent report (if it exists) forward to preserve the client's last known state.")
         if($null -ne $local:priorReport) {
             # A prior report was fetched, propagate it forward, but be certain to preserve status.
             $local:currentOnlineStatus = $TargetClient.Profile.IsOnline

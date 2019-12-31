@@ -44,7 +44,7 @@ Function Get-ClientSessions() {
             throw("The script could not find a list of clients to target." +
                 " Please check your configuration and try again.")
         } else { Get-ClientInstances -FromArray @($targets) }
-    $clients = [System.Collections.ArrayList]$clients
+    $clients = [System.Collections.ArrayList]@($clients)
     # The only reason "Get-ClientInstances" does NOT return an already-sorted and unique
     #  array of CliMonClient objects is in case anything is to be done with invalid objects
     #  as well, such as output of information during debug modes or at the end of the script.
@@ -52,7 +52,7 @@ Function Get-ClientSessions() {
     # Get valid clients only, then use a custom pipeline function to return unique CliMonClient instances.
     Write-Debug -Message "ALL Client hostnames: $($clients.Hostname)" -Threshold 3 -Prefix '>>'
     [System.Collections.ArrayList]$global:CliMonClients =
-        $clients | Where-Object -Property IsValid -eq $True | Get-CliMonClientUnique
+        @($clients | Where-Object -Property IsValid -eq $True | Get-CliMonClientUnique)
     Write-Debug -Message "Unique & Valid client hostnames: $($global:CliMonClients.Hostname)" -Threshold 2 -Prefix '>>'
 }
 
@@ -115,6 +115,8 @@ Function Start-Sessions() {
             # If the session is null or doesn't exist, the client doesn't have a session.
             if($null -eq $local:clientSession) {
                 Write-Debug -Message "The client is NOT invokable, and has no valid session." -Threshold 3 -Prefix '>>>>>>>>'
+                $client.SessionOpen = $False
+                $client.ClientSession = $null
                 $client.Profile.IsInvokable = $False
                 continue
             } else {
