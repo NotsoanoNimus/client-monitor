@@ -153,13 +153,13 @@ if($global:CliMonConfig.ConfigImported -ne $True) {
 # I left my mess here as a demonstration of how simple it is to make "permanent" tweaks
 #  to some of the parameters a user might otherwise have to pass in every time.
 #$global:CliMonConfig.Verbosity = 5
-$ClientsList = 'C:\temp\clients.txt'
+#$ClientsList = 'C:\temp\clients.txt'
 #$CompressJSON = $False
 #$DeltasReport = $True
 #$SnapshotMode = $True
 #$NoFilters = $True
 #$FlatReportCsv = $True
-$Ephemeral = $True
+#$Ephemeral = $True
 #$NoNotifications = $True
 #$AsAttachment = $True
 
