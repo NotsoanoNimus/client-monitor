@@ -652,7 +652,7 @@ Function Get-FilenameTrackingSection() {
                 Write-Debug -Message "$category --> $subcategory --> $pattern" -Threshold 2 -Prefix '>>>>>>'
                 # Select only fields relevant to the current pattern.
                 $local:selectedFields = $FilenameViolations.$category.$subcategory.Keys `
-                    | Where-Object { $_ -Like "$($pattern)*" }
+                    | Where-Object { $_ -Like "*$($pattern)*" }
                 #Write-host "$pattern"
                 # If "selectedFields" contains any valid (non-null) fields, proceed.
                 if($local:selectedFields.Count -gt 0 -And $null -ne $local:selectedFields[0]) {
