@@ -154,11 +154,6 @@ Function Send-CliMonNotification() {
         $global:CliMonConfig.ReportsDirectory,
         $global:CliMonConfig.Notifications.AlternateBodyText
     )
-    Write-Debug -Message "Checking for SMTP credential overrides." -Threshold 2 -Prefix '>>>>'
-    # If the SmtpCredential parameter to the script is not null, override the configuration variable.
-    if($null -ne $SmtpCredential -And $SmtpCredential -Is [PSCredential]) {
-        $global:CliMonConfig.Notifications.Smtp.Credential = $SmtpCredential
-    }
     Write-Debug -Message "Initializing the SMTP client object." -Threshold 2 -Prefix '>>>>'
     # Initialize the SMTP client in preparation for sending the email.
     $local:finalNotification.StartSmtpClient(

@@ -46,6 +46,7 @@ $global:ClientMonitorRegexes = @{
 Class CliMonClient {
     [String]$Hostname = $null   #the client's hostname (capitalized, with the DomainSuffix variable added)
     [String]$IpAddress = $null   #the client's ipv4 address
+    [String]$Ip6Address = $null   #the client's ipv6 address (if any) -- this is scaffolding for later
     [String]$RealName = ""   #the full (or partial) name of the workstation
     [Boolean]$IsValid = $False   #is the object a 'valid' client (has all needed info)
     [Boolean]$SessionOpen = $False   #is the session currently open

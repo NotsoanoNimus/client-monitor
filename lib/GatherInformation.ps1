@@ -45,17 +45,21 @@ Function Get-CurrentEnvironment() {
         Write-Debug -Message "Getting the target's reachability." -Threshold 1 -Prefix '>>'
         $local:skipToNext = Get-ClientStatus -TargetClient $client
         if($local:skipToNext -eq $True) { continue }
-        # Since the script wasn't ordered to skip the client, the target is reachable.
-        #  This now includes localhost clients as well.
-        if($client.SessionOpen -eq $True) { $local:reachableClients += $client }
-        else {
-            Write-Host "~~ Skipping client $($client.Hostname): failed to acquire session state."
+        if($client.SessionOpen -eq $False) {
+            Write-Host "~~ Skipping client $($client.Hostname): failed to establish a session."
         }
     }
+    # This line will be run between each call to the information gathering functions below,
+    #  in the event that a client becomes unreachable and needs to be plucked from the table
+    #  of reachable clients. This is acceptable since it's using a very fast method to fetch
+    #  the list of clients with open sessions.
+    $local:reachableClients = $global:CliMonClients | Where-Object { $_.SessionOpen -eq $True }
     Set-AllClientConfigurationVariables -Clients $local:reachableClients
     # Mount the registry endpoints for each user on the remote machine.
+    $local:reachableClients = $global:CliMonClients | Where-Object { $_.SessionOpen -eq $True }
     Mount-AllUserHives -Clients $local:reachableClients
     # Fill out the $client.Profile variable.
+    $local:reachableClients = $global:CliMonClients | Where-Object { $_.SessionOpen -eq $True }
     Get-AllClientProfiles -Clients $local:reachableClients
     # Filename tracking must be done AFTER getting the client profile, due to the way
     #  the profile is returned from the remote session in the previous step.
@@ -64,11 +68,14 @@ Function Get-CurrentEnvironment() {
         #  of it), because it is a very complicated feature that was added well after
         #  the other Profile items, and is thus much different.
         # This is mostly for the ease of maintenance and bugfixes.
+        $local:reachableClients = $global:CliMonClients | Where-Object { $_.SessionOpen -eq $True }
         Get-AllClientTrackedFiles -Clients $local:reachableClients
     }
     # Write the client Profile objects to individual JSON reports.
+    $local:reachableClients = $global:CliMonClients | Where-Object { $_.SessionOpen -eq $True }
     Write-AllClientReports -Clients $local:reachableClients -FinalCall
     # Unmount any user hives that were mounted earlier, within each session.
+    $local:reachableClients = $global:CliMonClients | Where-Object { $_.SessionOpen -eq $True }
     Remove-AllUserHives -Clients $local:reachableClients
     # If enabled, generate the flat report CSV as an aggregate report of all Client Profiles.
     if($FlatReportCsv -eq $True) { Write-CliMonFlatReport }
@@ -338,7 +345,7 @@ Function Mount-AllUserHives() {
             $local:mountPoints = $local:mountResults `
                 | Where-Object -Property PSComputerName -eq "$($client.Hostname)"
             if($local:mountPoints.Count -gt 0) {
-                Write-Host "-- Mount points activated by Client Monitor for client: " -NoNewline
+                Write-Host "-- Registry mount points activated for client: " -NoNewline
                 Write-Host "$($client.Hostname)" -ForegroundColor Cyan
                 # Some hives were mounted successfully.
                 $local:mountPoints | ForEach-Object {
@@ -347,7 +354,8 @@ Function Mount-AllUserHives() {
                 }
             } else {
                 # Failure.
-                Write-Host "---- No user hives were mounted manually for this client."
+                Write-Host "-- No user registry hives were mounted manually for client: " -NoNewline
+                Write-Host "$($client.Hostname)" -ForegroundColor Cyan
                 # Possibly add a flag to ignore ANY CHANGES FOR PER-USER INFORMATION!!!
             }
         }
@@ -388,7 +396,6 @@ Function Get-AllClientProfiles() {
             $allProfilesInfo = @{}
             # Iterate through each mounted hive to get the information therein from the targets.
             #  Thanks to the beauty of sessions, the $mountedHives value is still defined.
-            #  This is among the "$Info" variable given earlier as well in Mount-UserHives.
             foreach($hive in $mountedHives) {
                 Write-Debug -Message "Checking hive: $hive" -Threshold 2 -Prefix '>>>>>>'
                 # Check whether the given hive name is a SID.
@@ -397,6 +404,17 @@ Function Get-AllClientProfiles() {
                     # If so, translate the SID into a username, but continue using the SID for fetching data.
                     $userObj = New-Object System.Security.Principal.SecurityIdentifier("$hive")
                     $username = ($userObj.Translate([System.Security.Principal.NTAccount])).Value
+                    # BUGFIX - 20191230
+                    #  Sometimes the domain name of certain users on a PC would flip in the item keyname of the final report.
+                    #  This would cause, for example, a cli-mon-defined DomainName value to be replaced with a ComputerName.
+                    #    Ex: StartupApp123.exe_TSP\notsoano -- becomes -- StartupApp123.exe_DESKTOP123h321\notsoano
+                    #         and fluctuates seemingly randomly.
+                    # To fix this, I will attempt to enforce the DomainName variable instead of relying on the system translation.
+                    #  This forces any variation of "USERNAME" or "COMPUTERNAME\USERNAME" to the desired "DOMAIN\USERNAME" format.
+                    $username = "$($global:CliMonConfig.DomainName)\$(
+                        if($username.Split('\').Count -gt 1) { $username.Split('\')[1] } else { $username }
+                    )"
+                    # Set the regLocation to the SID value.
                     $regLocation = $hive
                 } else {
                     Write-Debug -Message "The hive is interpreted as a regular (non-SID) type." `
@@ -729,8 +747,15 @@ Function Get-AllClientProfiles() {
             $local:invokableStatusChangePreserve = $client.Profile.InvokableStatusChange
             # Assign the profile to the return variable then reapply the status change variables.
             $client.Profile = $local:extractedProfile
-            $client.Profile.OnlineStatusChange = $local:onlineStatusChangePreserve
-            $client.Profile.InvokableStatusChange = $local:invokableStatusChangePreserve
+            # Seriously working to avoid a NullPointerException crash here.
+            if($null -ne $client.Profile -And $client.Profile.Keys.Count -gt 0) {
+                if($client.Profile.Keys -IContains "OnlineStatusChange") {
+                    $client.Profile.OnlineStatusChange = $local:onlineStatusChangePreserve
+                } else { $client.Profile.Add("OnlineStatusChange", $False) }
+                if($client.Profile.Keys -IContains "InvokableStatusChange") {
+                    $client.Profile.InvokableStatusChange = $local:invokableStatusChangePreserve
+                } else { $client.Profile.Add("InvokableStatusChange", $False) }
+            }
         }
     }
 }
@@ -767,8 +792,8 @@ Function Get-AllClientTrackedFiles() {
             # If the Profile parameter is set, the iteration is complicated by searching for BOTH
             #  a matching pattern and a matching profile. This step extracts items from the Profile
             #  that's being targeted, and helps to slim down the amount of per-pattern processing needed.
-            if($Profile -ne $null -And $Profile -ne "") {
-                $DataInput = ($DataInput | Where-Object -Property FullName -Like "$($Profile)")
+            if($null -ne $Profile -And $Profile -ne "") {
+                $DataInput = ($DataInput | Where-Object -Property FullName -Like "$($Profile)*")
             }
             # For each filename pattern being checked (from the config), check every individual
             #  object in the contents of the input data. If a filename matches the pattern, it

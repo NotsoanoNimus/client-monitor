@@ -41,17 +41,18 @@ Function Get-ClientSessions() {
     Write-Debug -Message "Getting client instances for the targets list." -Threshold 1 -Prefix '>>'
     $clients = 
         if($null -eq $targets -Or $targets.Length -lt 1) {
-            Write-Error ("The script could not find a list of clients to target." +
+            throw("The script could not find a list of clients to target." +
                 " Please check your configuration and try again.")
-            exit 2
         } else { Get-ClientInstances -FromArray @($targets) }
+    $clients = [System.Collections.ArrayList]$clients
     # The only reason "Get-ClientInstances" does NOT return an already-sorted and unique
     #  array of CliMonClient objects is in case anything is to be done with invalid objects
     #  as well, such as output of information during debug modes or at the end of the script.
     #
     # Get valid clients only, then use a custom pipeline function to return unique CliMonClient instances.
     Write-Debug -Message "ALL Client hostnames: $($clients.Hostname)" -Threshold 3 -Prefix '>>'
-    $global:CliMonClients = $clients | Where-Object -Property IsValid -eq $True | Get-CliMonClientUnique
+    [System.Collections.ArrayList]$global:CliMonClients =
+        $clients | Where-Object -Property IsValid -eq $True | Get-CliMonClientUnique
     Write-Debug -Message "Unique & Valid client hostnames: $($global:CliMonClients.Hostname)" -Threshold 2 -Prefix '>>'
 }
 
@@ -65,10 +66,8 @@ Function Start-Sessions() {
     # The reference for CliMonClient objects is the $global:CliMonClients list, so check it.
     if($null -eq $global:CliMonClients -Or
       ($global:CliMonClients -Is [System.Array] -And $global:CliMonClients.Length -lt 1)) {
-        Write-Error "There was an issue starting the sessions: there were no valid clients in the provided source."
-        exit 10
+        throw("There was an issue starting the sessions: there were no valid clients in the provided source.")
     }
-
     # Send out a single mass ping-check.
     Write-Debug -Message "Sending out a mass ping-check asynchronously." -Threshold 2 -Prefix '>>>>'
     $local:PingTasks = $global:CliMonClients.IpAddress | ForEach-Object {
@@ -115,9 +114,11 @@ Function Start-Sessions() {
                 }
             # If the session is null or doesn't exist, the client doesn't have a session.
             if($null -eq $local:clientSession) {
+                Write-Debug -Message "The client is NOT invokable, and has no valid session." -Threshold 3 -Prefix '>>>>>>>>'
                 $client.Profile.IsInvokable = $False
                 continue
             } else {
+                Write-Debug -Message "The client is invokable; session has been established." -Threshold 3 -Prefix '>>>>>>>>'
                 $client.ClientSession = $local:clientSession
                 $client.SessionOpen = $True
                 $client.Profile.IsInvokable = $True
@@ -172,6 +173,7 @@ Function Assert-SessionState() {
     if($null -ne $TargetClient.ClientSession -And
       $TargetClient.ClientSession.State -ne `
       [System.Management.Automation.Runspaces.RunspaceState]::Opened) {
+        Write-Debug -Message "Attempting to re-assert the PSSession." -Threshold 1 -Prefix '>>'
         $local:successfulSession = $False
         $local:clientSession = $null
         # If the session state is NOT opened, but there was previously a session there,
@@ -180,10 +182,12 @@ Function Assert-SessionState() {
         $local:pingTask = [System.Net.NetworkInformation.Ping]::new().SendPingAsync($TargetClient.IpAddress)
         [System.Threading.Tasks.Task]::WaitAll($local:pingTask)
         if($local:pingTestResult.Status -ne "Success") {
+            Write-Debug -Message "The client has gone offline." -Threshold 1 -Prefix '>>>>'
             $TargetClient.Profile.IsOnline = $False
             $local:successfulSession = $False
         } else { $TargetClient.Profile.IsOnline = $True }
         if($TargetClient.IsLocalhost() -eq $True -And $global:CliMonIsAdmin -eq $False) {
+            Write-Debug -Message "The client is LOCALHOST and the script user is NOT a local administrator." -Threshold 1 -Prefix '>>>>'
             $local:successfulSession = $False
         }
         $local:clientSession =
@@ -193,20 +197,24 @@ Function Assert-SessionState() {
                 New-PSSession '127.0.0.1' -ErrorAction SilentlyContinue
             }
         if($local:clientSession -IsNot [System.Management.Automation.Runspaces.PSSession] -Or
-            $local:clientSession.State -ne [System.Management.Automation.Runspaces.RunspaceState]::Opened) {
+          $local:clientSession.State -ne [System.Management.Automation.Runspaces.RunspaceState]::Opened) {
+            Write-Debug -Message "The new PSSession object cannot be started." -Threshold 1 -Prefix '>>>>'
             $local:successfulSession = $False
         } else { $local:successfulSession = $True }
         # Check if a successful session was established, and if so, capture it.
         #  Otherwise, set the client as dead/uninvokable.
         if($local:successfulSession -eq $True) {
+            Write-Debug -Message "Session re-asserted successfully." -Threshold 1 -Prefix '>>>>'
             $TargetClient.Profile.IsInvokable = $True
             $TargetClient.ClientSession = $local:clientSession
             $TargetClient.SessionOpen = $True
             # Refresh the global variables within the client session.
             #  NOTE: This line is the reason that the "NoRefresh" switch is necessary
             #         within the Complete-RemoteOperations function, to prevent cascading errors.
+            Write-Debug -Message "Attempting to reconfigure target global variables." -Threshold 2 -Prefix '>>>>>>'
             Set-AllClientConfigurationVariables -Clients @($TargetClient)
         } else {
+            Write-Debug -Message "Session could not be re-asserted." -Threshold 1 -Prefix '>>>>'
             $TargetClient.Profile.IsInvokable = $False
             $TargetClient.ClientSession = $null
             $TargetClient.SessionOpen = $False
@@ -238,8 +246,7 @@ Function Get-TargetClients() {
     } else {
         # The "ClientsList" parameter is manually set/passed. Find it, if possible, and import it.
         if(-Not(Test-Path $ClientsList)) {
-            Write-Error "The path provided for the 'ClientsList' parameter does not exist ($($ClientsList))."
-            exit 4
+            throw("The path provided for the 'ClientsList' parameter does not exist ($($ClientsList)).")
         }
         Write-Debug -Message "Collecting line-by-line clients from: $ClientsList" -Threshold 2 -Prefix '>>>>'
         return (Get-Content $ClientsList)
@@ -258,19 +265,30 @@ Function Get-TargetClients() {
 Function Complete-RemoteOperations() {
     param([Object[]]$Clients, [ScriptBlock]$Actions,
         [Array]$Arguments, [Switch]$NoRefresh = $False)
+    Write-Debug -Message "Running remote invocations." -Threshold 1 -Prefix '>>'
     # Cast the clients array to a flexible list type.
     $local:clientsList = [System.Collections.ArrayList]$Clients
-    # Go through the list of clients and see if the session state is broken or disconnected.
+    # Go through the list of clients and check if each session state is broken or disconnected.
     $local:origClientsLength = $Clients.Count
     for($i = 0; $i -lt $local:origClientsLength; $i++) {
         $client = $Clients[$i]
         if($null -eq $client) { continue }
+        # If the client session was already marked as 'dead', just silently continue to the next.
+        if($global:CliMonDeadSessions -IContains $client.Hostname) {
+            Write-Debug -Message "Skipping session for client: $($client.Hostname)" -Threshold 1 -Prefix '>>>>'
+            $local:clientsList.RemoveAt($i)
+            continue
+        }
         if($client.ClientSession.State `
           -ne [System.Management.Automation.Runspaces.RunspaceState]::Opened) {
+            Write-Debug -Message "The client session is no longer valid for $($client.Hostname)." `
+                -Threshold 1 -Prefix '>>>>'
             # Usually the $NoRefresh switch will only be set to prevent loops.
-            if($NoRefresh -eq $False -And $client.ClientSession.State) {
+            if($NoRefresh -eq $False) { #-And $client.ClientSession.State) {
                 Assert-SessionState -TargetClient $client
             } elseif($NoRefresh -eq $True) {
+                Write-Debug -Message "The monitor is ordered NOT to re-assert. Nullifying session." `
+                    -Threshold 1 -Prefix '>>>>'
                 $client.ClientSession = $null
                 $client.SessionOpen = $False
             }
@@ -279,8 +297,15 @@ Function Complete-RemoteOperations() {
             #  usually the Clients parameter will not reference the global CliMonClients array.
             if($client.SessionOpen -eq $False) {
                 Write-Host ("~~~~ Couldn't maintain a valid session with client " +
-                    "'$($client.Hostname)'. Ignoring this client.")
+                    "'$($client.Hostname)'. Ignoring this client and considering it dead.")
                 $local:clientsList.RemoveAt($i)
+                # Also need to remove the client from the global clients list, as they cannot have
+                #  their session state re-asserted successfully. Also add them to the DeadSessions
+                #  list to track later in notifications.
+                try {
+                    ($global:CliMonClients | Where-Object Hostname -eq $client.Hostname) | ForEach-Object { $global:CliMonClients.Remove($_) }
+                } catch { }
+                $global:CliMonDeadSessions += $client.Hostname
             }
         }
     }

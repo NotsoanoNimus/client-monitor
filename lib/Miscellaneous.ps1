@@ -190,6 +190,72 @@ Function Update-ScriptConfiguration() {
                 if($_ -ne "PackageUserInformation") { $_ }
             }
     }
+    # If the SmtpCredential parameter to the script is not null, override the configuration variable.
+    Write-Debug -Message "Checking for SMTP credential overrides." -Threshold 2 -Prefix '>>>>'
+    if($null -ne $SmtpCredential -And $SmtpCredential -Is [PSCredential]) {
+        $global:CliMonConfig.Notifications.Smtp.Credential = $SmtpCredential
+    }
+}
+
+
+
+# Compare a host IP address (v4 or v6) against a given array of subnets. Returns an array
+#  of strings representing subnets matched with the given host IP. Returns $null if there
+#  is no match amongst the subnets.
+Function Get-CliMonSubnetMembership() {
+    param([Array]$HostIps, [Array]$Subnets, [Switch]$IPv6 = $False)
+    # Define an array to hold matching subnets.
+    $local:matchingSubnets = @()
+    # For each IP address, check against the subnets.
+    foreach($ipAddress in $HostIps) {
+        # Strip any CIDR notation off the host IP, if it was defined that way.
+        $ipAddress = $ipAddress.Split('/')[0]
+        # Check if the particular IP address is listed as an excepted address.
+        if($global:CliMonConfig.Notifications.IpAddressAlerts.IpAddressExclusions -IContains $ipAddress) { continue }
+        # Set up the sub-array for matching.
+        $local:subSubnetsMatching = @()
+        # For each subnet in the Subnets array, run a simple logical computation to determine if
+        #  the host's IP address belongs to the subnet.
+        foreach($subnet in $Subnets) {
+            # Get the CIDR mask value and network ID from the current subnet: <networkId>/<CIDR>.
+            $local:networkId, $local:cidrMask = $subnet.Split('/')
+            # Draw the demarcation point for IPv4 vs. IPv6. This is where the difference is apparent.
+            if($IPv6 -eq $True) {
+                # TODO. IPv6 contains 128 bits, which may end up being a much different process than below.
+                # Any section less than 4 characters will have zeroes prepended, then :: will be expanded to the proper
+                #  amount of 0s, and finally the value can be converted to a binary/decimal address using two LONG types.
+                # Anything above /64 will be checked against the upper LONG, and -le 64 will check the lower LONG.
+            } else {
+                # Get the decimal value of the mask (using shift-left on a 32-bit unsigned complement of 0).
+                $local:maskValue = ((-BNot [uint32]0) -ShL (32 - $local:cidrMask))
+                # Calculate the decimal value of the given host IP address.
+                # Each octet of the IP address is separated numerically like so: 4.3.2.1
+                $local:octet4, $local:octet3, $local:octet2, $local:octet1 = [uint32[]]$ipAddress.Split('.')
+                [uint32]$local:hostValue = (($local:octet4 -ShL 24) + ($local:octet3 -ShL 16) + 
+                    ($local:octet2 -ShL 8) + ($local:octet1))
+                # And repeating the same process for the Network ID:
+                $local:octet4, $local:octet3, $local:octet2, $local:octet1 = [uint32[]]$local:networkId.Split('.')
+                [uint32]$local:networkIdValue = (($local:octet4 -ShL 24) + ($local:octet3 -ShL 16) + 
+                    ($local:octet2 -ShL 8) + ($local:octet1))
+                # The rule to detect whether or not an IP fits within a subnet is:
+                #     (z && x) == (y && x), where:
+                #         x = the subnet mask; y = the network ID; z = the host IP
+                if(($local:hostValue -BAnd $local:maskValue) -eq ($local:networkIdValue -BAnd $local:maskValue)) {
+                    # If it's a match, add the subnet to the sub-routine's "matched" array.
+                    $local:subSubnetsMatching += $subnet
+                }
+            }
+        }
+        # Before moving to the next IP address...
+        # If any subnets matched the IP, add an object to the MatchingSubnets variable.
+        if($local:subSubnetsMatching.Count -gt 0) {
+            $local:matchingSubnets += [Hashtable]@{
+                AlertSubnets = @($local:subSubnetsMatching); ClientAddress = $ipAddress;
+            }
+        }
+    }
+    # Return the final data depending on the isMatch condition.
+    if($local:matchingSubnets.Count -gt 0) { return $local:matchingSubnets } else { return $null }
 }
 
 
@@ -199,11 +265,21 @@ Function Update-ScriptConfiguration() {
 #  this run of the script. This does NOT include delta reports and such. TrappedError should only ever
 #  be triggered by a fatal script failure or a general failure to dispatch the notification email.
 Function Invoke-CliMonCleanup() {
-    param([Switch]$TrappedError = $False)
+    param([Switch]$TrappedError = $False, [Object]$ErrorItem = $null)
     Write-Debug -Message "Running Client Monitor cleanup tasks." -Threshold 1 -Prefix '>>'
     try {
         if(($TrappedError -eq $True -And $global:CliMonConfig.NoRevert -eq $False) -Or
         $Ephemeral -eq $True) {
+            if($global:CliMonConfig.Notifications.OnError.Enabled -eq $True `
+              -And $TrappedError -eq $True -And $Ephemeral -eq $False) {
+                Write-Host ("~~~~ Dispatching a notification of the crash according to the configuration.")
+                try {
+                    Send-CliMonCrashNotification -ErrorItem $ErrorItem
+                } catch {
+                    Write-Host ("~~~~~~ FAILED TO SEND THE CRASH NOTIFICATION. PLEASE CHECK THE CONFIGURATION!") `
+                        -ForegroundColor Red
+                }
+            }
             if($Ephemeral -eq $False) {
                 Write-Host ("~~ A critical error was encountered." +
                     " Reverting all client reports and trackers for this session.")
@@ -275,6 +351,39 @@ Function Invoke-CliMonCleanup() {
     # Regardless of the exit type, if the global timer is running, stop it.
     if($global:CliMonGenTimer.IsRunning -eq $True) { $global:CliMonGenTimer.Stop() }
 }
+
+
+
+# Send a Client Monitor crash notification using the settings outlined in the "OnError" section of the
+#  Client Monitor configuration for notifications settings.
+Function Send-CliMonCrashNotification() {
+    param([Object]$ErrorItem = $null)
+    # Build the notification body quickly, and set up the Send-MailMessage params.
+    $local:emailBody = $global:CliMonConfig.Notifications.OnError.Body -Replace '\$_', '$$$$_'
+    $local:errorText = $Error | ForEach-Object { "<li style='color:red;'>$_`n</li>" }
+    $local:emailBody = if($null -ne $_) {
+        $local:emailBody -Replace '\[\[ERRORTEXT\]\]', "<ul>$($local:errorText)</ul>"
+    } else { $local:emailBody -Replace '\[\[ERRORTEXT\]\]', 'Unknown Error' }
+    $local:mailParams = [Hashtable]@{
+        "Body" = "$($local:emailBody)";
+        "To" = $global:CliMonConfig.Notifications.OnError.Recipient;
+        "From" = $global:CliMonConfig.Notifications.Source;
+        "UseSsl" = $global:CliMonConfig.Notifications.Smtp.UseSsl;
+        "Port" = $global:CliMonConfig.Notifications.Smtp.ServerPort;
+        "SmtpServer" = $global:CliMonConfig.Notifications.Smtp.Server;
+        "Subject" = $global:CliMonConfig.Notifications.OnError.Subject;
+        "Priority" = "High";
+    }
+    if($null -ne $global:CliMonConfig.Notifications.Smtp.Credential) {
+        $local:mailParams.Add("Credential", $global:CliMonConfig.Notifications.Smtp.Credential)
+    }
+    # Attempt to actually dispatch the notification. As of this time, there are no error trackers on this.
+    Send-MailMessage @local:mailParams -BodyAsHtml:$True
+    if($? -eq $False) { throw('Failed to dispatch the crash notification.') }
+    else { Write-Host "------ Successfully dispatched the crash notification to: $($local:mailParams.To)" }
+}
+
+
 
 # Helper function for report cleanup. Compare two dates and return the difference in hours
 #  between the two times. Since the dates are coming from filenames (which can't have a ':'

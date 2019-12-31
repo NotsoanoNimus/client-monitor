@@ -58,6 +58,8 @@ $global:CliMonClients = $null
 # SLATED FOR FUTURE USE. A container for all client session objects that can be easily referenced.
 #  This will be crucial for implementing simultaneous session calls across all targets.
 $global:ClientSessions = $null
+# Tracker array for hostnames whose sessions have died during the Gathering phase of reporting.
+$global:CliMonDeadSessions = @()
 # An object containing all deltas for each client.
 $global:CliMonDeltas = $null
 # Whether or not there were deltas detected.

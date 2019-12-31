@@ -321,6 +321,49 @@ $global:CliMonConfig = @{
 			Server = 'relay.for.outbound.clientmonitor.mail.net'
 			ServerPort = 25
 		}
+
+		# Settings for script crash/failure notification emails.
+		#  NOTE: The SMTP-related settings will use the same ones as the above 'Smtp' section.
+		OnError = @{
+			# Whether or not to even send crash/failure reports.
+			Enabled = $True;
+			# Destination email address. This will be a plain string.
+			Recipient = 'postmaster@thestraightpath.email';
+			# Email subject for the crash notification.
+			Subject = '[FATAL] Client Monitor Crash Notification'
+			# Body text to include in the message. "[[ERRORTEXT]]" is substituted dynamically for the error text.
+			Body = 
+				("A fatal error was encountered while running the Client Monitor script. The <strong>top-most</strong>" +
+				 " error is the offending line which caused the script to halt, in the event more than one is present." +
+				 "<br /><p style='color:red;'>[[ERRORTEXT]]</p>")
+		}
+
+		# Controls settings that track whether a client's IP address is located within one of the defined
+		#  network subnets (IPv4 or IPv6) that are added to the below array. "Alert" simply means that the
+		#  header of the client's "changes" section will be modified in the notification to include the
+		#  message in a parenthetical manner. These alerts are PERSISTENT and COUNT AS CLIENT "CHANGES", so
+		#  if a particular alert continues to be raised, either fix the issue or simply exempt the IP below.
+		IpAddressAlerts = @{
+			# Whether or not to enable the alert.
+			Enabled = $True;
+			# Defined IPv4 and IPv6 subnets that fall within the organization's DHCP ranges. This can also be used to
+			#  define subnets that need attention in each notification.
+			# ALL subnets must be defined in CIDR notation. See here for help: https://whatismyipaddress.com/cidr
+			# This includes SINGLE IP ADDRESSES as well (/32 for IPv4 and /128 for IPv6).
+			IpRanges = @(
+				"192.168.1.192/26", "172.22.222.0/23"
+			);
+			# Excluded addresses within the IpRanges above that should NOT raise an alert.
+			#  These should NOT be in CIDR notation, as they are single exceptions.
+			IpAddressExclusions = @(
+				"192.168.1.202", "172.22.223.27"
+			)
+			# The text to display with the client header. Keep this concise and meaningful.
+			#  The "[[IP]]" token is dynamically replaced with the client's IP address and "[[SUBNETS]]" with the matched subnet.
+			# NOTE: HTML formatting can also be added to this message as desired.
+			Message = ("Client IP <span style='color:steelBlue;font-weight:bold;'>[[IP]]</span> matched subnet(s)" +
+				" <span style='color:steelBlue;font-weight:bold;'>[[SUBNETS]]</span>.")
+		}
 		
 		# Generate a notification even when there aren't any changes? Disabled by default.
 		#  This is more useful for just knowing when the script is running and monitoring if it's actually doing its job.
@@ -351,10 +394,9 @@ $global:CliMonConfig = @{
 }
 
 
-# The second section of the configuration is for self-referential values (variables that need)
-#  to reference other CliMonConfig variables. These lines must come secondarily due to intermittent
+# The second section of the configuration is for self-referential values (variables that need
+#  to reference other CliMonConfig variables). These lines must come secondarily due to intermittent
 #  race conditions resulting from cross-referencing of a config variable before its definition.
-#
 
 # The full path of the file to read/write for Recent Installations tracking.
 #  By default, this is placed in the Reports Directory with a static filename.

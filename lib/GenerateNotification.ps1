@@ -48,11 +48,10 @@ Function Write-CliMonNotification() {
     }
     # Declare a function-level StringBuilder for the entirety of the "BodyText" section.
     $BodyText_Container = [System.Text.StringBuilder]::new()
-    # If no changes were detected, set the body text to the no-change text if enabled.
-    #  Otherwise, set the notification global text to an empty string.
-    if($null -eq $clientsWithChanges -Or
-      $clientsWithChanges.Count -le 0 -Or
-      $global:CliMonNoDeltas -eq $True) {
+    # If no changes were detected, and no dead sessions were reaped, set the body text to
+    #  the no-change text if enabled. Otherwise, set the notification global text to an empty string.
+    if(($null -eq $clientsWithChanges -Or $clientsWithChanges.Count -le 0 -Or
+      $global:CliMonNoDeltas -eq $True) -And $global:CliMonDeadSessions.Count -le 0) {
         Write-Host "-- There were no clients with changes; " -NoNewline
         if($global:CliMonConfig.Notifications.NotifyOnNoChange -eq $True) {
             # If the notification on NO CHANGE are enabled, set the BODYTEXT to the config.
@@ -64,44 +63,75 @@ Function Write-CliMonNotification() {
             [void]$BodyText_Container.Clear()
             Write-Host "not sending any notification."
         }
+    # If no changes were detected, but dead sessions WERE reaped, there still must be a notification.
+    #  This is because the session that was killed might have contained changes but didn't quite make it.
+    } elseif(($null -eq $clientsWithChanges -Or $clientsWithChanges.Count -le 0 -Or
+      $global:CliMonNoDeltas -eq $True) -And $global:CliMonDeadSessions.Count -gt 0) {
+        $local:intermediateResult = (
+            "$($global:CliMonConfig.Notifications.ChangesBodyHeader)" +
+            "$(Add-TimeInformationToBody)" +
+            "$(if($global:CliMonDeadSessions.Count -gt 0) { Add-DeadClientsToBody } else { '' })" +
+            "<br />`n<hr />`nThere were no changes detected, but this notification was dispatched due to the dead sessions above."
+        )
+        [void]$BodyText_Container.Clear()
+        [void]$BodyText_Container.Append($local:intermediateResult)
     } else {
         Write-Host "-- There are clients with changes to parse."
         # Each section/call below is dependent on whether the corresponding Trigger is enabled
         #  in the configuration for Notifications.
         foreach($client in ($clientsWithChanges | Sort-Object)) {
             $local:parseType = if($NoFilters -eq $False) { "filtered" } else { "unfiltered" }
-            Write-Host "---- Parsing $($local:parseType) notification data for client " -NoNewline
+            Write-Host "---- Parsing $($local:parseType) notification data for client: " -NoNewline
             Write-Host "$($client.Hostname)" -ForegroundColor Cyan -NoNewline
             Write-Host "."
+            # Set the client's deltas object.
+            $local:clientDeltas = $global:CliMonDeltas."$($client.Hostname)"
             # Set up a per-client body section field.
             $local:BodyText_PerClient = [System.Text.StringBuilder]::new()
             # Get the change in client reachability, if enabled.
-            [void]$local:BodyText_PerClient.Append((
-                Get-ReachabilityChange -TargetClient $client))
+            if($global:CliMonConfig.Notifications.Triggers.ReachabilityChange -eq $True) {
+                Write-Host "------ Searching for reachability changes."
+                [void]$local:BodyText_PerClient.Append(
+                    (Get-ReachabilityChange -TargetClient $client))
+            }
+            # Get information about the client IP address; see if it resides in an 'alert' subnet, if enabled.
+            if($global:CliMonConfig.Notifications.IpAddressAlerts.Enabled -eq $True -And
+              $null -ne $local:clientDeltas.MatchedSubnets) {
+                Write-Host "------ Client is part of one or more alert subnets."
+                [void]$local:BodyText_PerClient.Append(
+                    (Get-IpAddressAlertSection -TargetClient $client `
+                        -MatchedSubnets $local:clientDeltas.MatchedSubnets))
+            }
             # Stop processing the client here if they are currently noted as unreachable.
             if($client.Profile.IsOnline -eq $False -Or $client.Profile.IsInvokable -eq $False) {
                 # This will finalize the client section if they have gone offline.
+                Write-Host "------ Client is marked as unreachable. Moving on."
                 [void]$BodyText_Container.Append($local:BodyText_PerClient.ToString())
                 continue
             }
+            # Process any filename-tracker deltas that were caught, if tracking is enabled.
+            if($global:CliMonConfig.FilenameTracking.Enabled -eq $True -And
+              $clientDeltas.FilenameViolations.Count -gt 0) {
+                Write-Host "------ Filename Tracker violations were detected. Parsing."
+                [void]$local:BodyText_PerClient.Append(
+                    (Get-FilenameTrackingSection -FilenameViolations $clientDeltas.FilenameViolations))
+            }
             # -----------------------------------------
-            # Set the client's deltas object.
-            $local:clientDeltas = $global:CliMonDeltas."$($client.Hostname)"
             # Use a modularized function to add to the report body if the given category/section
             #  is enabled with the triggers.
             # NOTE: The InstalledApps section will require the prefiltering information.
             foreach($keyname in $global:CliMonConfig.TrackedValues.Keys) {
                 # Check that the triggers are enabled.
                 if($global:CliMonConfig.Notifications.Triggers."$($keyname)Change" -eq $True) {
+                    # By default, set the prefiltered section to $null.
+                    $local:prefilteredInstalledApps = $null
                     if($keyname -eq "InstalledApps") {
                         # If InstalledApps is the current key, set up prefiltering.
                         Write-Debug -Message "Getting InstalledApps tracking filters." -Threshold 1 -Prefix '>>>>'
                         $local:prefilteredInstalledApps = 
                             Get-PrefilteredInstalledApps -TargetClient $client
-                    } else {
-                        # Otherwise, set the prefiltered section to $null.
-                        $local:prefilteredInstalledApps = $null
                     }
+                    Write-Host "------ Parsing deltas for section: $keyname"
                     # Call the function to add the information to the report.
                     [void]$local:BodyText_PerClient.Append((Add-ToReport `
                         -NewObject $local:clientDeltas."New$($keyname)" `
@@ -128,15 +158,21 @@ Function Write-CliMonNotification() {
                 # Swap background colors. This is done within this 'if' because colors should only
                 #  be flipped when a client has something to write to the notification.
                 $global:CliMonFlipColors = -Not $global:CliMonFlipColors
-                Write-Host "---- The client's changes were added to the notification."
+                Write-Host "------ All client changes added to the final notification."
+            } else {
+                Write-Host "------ There were no changes for this client, or all changes have been filtered."
             }
         }
         # Once the loop is finished for all of the clients, check to see if the ChangesBodyHeader
         #  text should be prepended to the value of the wrapper. This will only be done if there 
         #  were unfiltered changes present from the last steps.
         if($BodyText_Container.Length -gt 0 -Or $BodyText_Container.ToString() -ne "") {
-            $local:intermediateResult = $global:CliMonConfig.Notifications.ChangesBodyHeader +
-                (Add-TimeInformationToBody) + $BodyText_Container.ToString()
+            $local:intermediateResult = (
+                "$($global:CliMonConfig.Notifications.ChangesBodyHeader)" +
+                "$(Add-TimeInformationToBody)" +
+                "$(if($global:CliMonDeadSessions.Count -gt 0) { Add-DeadClientsToBody } else { '' })" +
+                "$($BodyText_Container.ToString())"
+            )
             [void]$BodyText_Container.Clear()
             [void]$BodyText_Container.Append($local:intermediateResult)
         }
@@ -459,7 +495,6 @@ Function Search-NotificationFilter() {
 Function Get-ReachabilityChange() {
     # NOTE: Be certain to cast all Append calls to VOID to prevent capturing multiple values.
     param([Object]$TargetClient)
-    if($global:CliMonConfig.Notifications.Triggers.ReachabilityChange -eq $False) { return "" }
     # Collect the client's deltas into a single reference.
     $local:clientDeltas = $global:CliMonDeltas."$($TargetClient.Hostname)"
     # Only execute the following block if there was an actual change in reachability.
@@ -501,29 +536,25 @@ Function Get-ReachabilityChange() {
     } else { return }
 }
 
+
+
 # Get applications that need to be prefiltered according to the automatic application tracker.
 Function Get-PrefilteredInstalledApps() {
     param([Object]$TargetClient)
+    # Explicitly default the prefilter trackers variable to $null.
+    $local:prefilterTrackers = $null
     # Return an empty array if (1) the tracking isn't enabled, or (2) the TrackedValues config
     #  does not include either DisplayName or DisplayVersion.
     if($global:CliMonConfig.Notifications.InstallationChanges.Enabled -eq $False -Or
       -Not ($global:CliMonConfig.TrackedValues.InstalledApps.Contains("DisplayName") -And
       $global:CliMonConfig.TrackedValues.InstalledApps.Contains("DisplayVersion"))) { return @() }
-    # Set up the trackers using the updated information from the "Compare" stage of the script.
-    if($null -ne $global:CliMonUpdatedApplicationTrackingFilters -And
-      ($global:CliMonUpdatedApplicationTrackingFilters `
-      | Get-Member -Type NoteProperty).Name.Count -gt 0) {
-        $local:prefilterTrackers = $global:CliMonUpdatedApplicationTrackingFilters
-    } else {
-        # If the "updated" tracking filters from the previous step were not given content, try
-        #  to instead get the trackers from the tracker file at the very least.
-        try {
-            $local:prefilterTrackers = Get-InstalledAppsTrackerContents
-        } catch {
-            $local:prefilterTrackers = (@{} | ConvertTo-Json)
-            Write-Host ("~~~~ Automatic application tracking is enabled but the ReportLocation" +
-                " couldn't be read. No applications will be tracked.")
-        }
+    # Try to get the contents of the InstalledApps tracker. If it fails, set it to empty and notify.
+    try {
+        $local:prefilterTrackers = Get-InstalledAppsTrackerContents
+    } catch {
+        $local:prefilterTrackers = (@{} | ConvertTo-Json)
+        Write-Host ("~~~~ Automatic application tracking is enabled but the ReportLocation" +
+            " couldn't be read. No applications will be tracked.")
     }
     if($null -ne $local:prefilterTrackers -And
       ($local:prefilterTrackers | Get-Member -Type NoteProperty).Name.Count -gt 0) {
@@ -548,7 +579,7 @@ Function Get-PrefilteredInstalledApps() {
                     $local:displayName = "$($local:installedApp.DisplayName)"
                     # If the display name key from the list contains a version number matching this
                     #  application's version number, its index key is added to the final result.
-                    if($local:prefilterTrackers.$local:displayName `
+                    if($local:prefilterTrackers."$($local:displayName)" `
                       -IContains "$($local:installedApp.DisplayVersion)") {
                         $local:returnData += $keyname
                         Write-Debug -Message "Prefiltered InstalledApps key: $keyname" -Threshold 2 -Prefix '>>>>'
@@ -560,6 +591,107 @@ Function Get-PrefilteredInstalledApps() {
         return $local:returnData
     }
 }
+
+
+
+# Return any information or alerts about the client's IP address, if it happens to fall within
+#  one or more of the "alert" IP subnets defined in the configuration.
+Function Get-IpAddressAlertSection() {
+    param([Array]$MatchedSubnets)
+    # Define the base stringbuilder object for the section.
+    $local:returnData = [System.Text.StringBuilder]::new()
+    [void]$local:returnData.Append("<div class='DiffsSection'>")
+    # Compile a clean list of all matching alert subnets.
+    foreach($subnet in $MatchedSubnets) {
+        $local:notificationMessage =
+            $global:CliMonConfig.Notifications.IpAddressAlerts.Message -Replace '\[\[IP\]\]', "$($subnet.ClientAddress)"
+        # A VERY ugly method to produce very pretty output.
+        $local:notificationMessage = $local:notificationMessage -Replace '\[\[SUBNETS\]\]', `
+            "$(
+                if($subnet.AlertSubnets.Count -gt 1) {
+                    for($local:i = 0; $local:i -lt $subnet.AlertSubnets.Count; $local:i++){
+                        if($local:i -lt ($subnet.AlertSubnets.Count-1)){
+                            "$($subnet.AlertSubnets[$local:i])$(if($subnet.AlertSubnets.Count -gt 2){","})"
+                        } else { "& $($subnet.AlertSubnets[$local:i])" }
+                    }
+                } else { "$($subnet.AlertSubnets)" }
+            )"
+        [void]$local:returnData.Append("$($local:notificationMessage)<br />`n")
+    }
+    # Add the final data to the string(s).
+    [void]$local:returnData.Append("`n</div>")
+    # Return the final data.
+    return $local:returnData.ToString()
+}
+
+
+
+# Generate a table if any filename tracking violations are detected.
+Function Get-FilenameTrackingSection() {
+    param([Object]$FilenameViolations)
+    Write-Debug -Message "Building filename trackers section." -Threshold 1 -Prefix '>>>>'
+    $local:allTables = [System.Text.StringBuilder]::new()
+    [void]$local:allTables.Append(
+        "<span class='SectionHeader'>Filename Trackers</span><br />`n<div class='DiffsSection'>`n")
+    # Structure of these nested loops:
+    #    $category = "outer" nest (like "SystemFilesCounts")
+    #    $subcategory = per-user/per-location information (like "C:\Users\TestAccount")
+    #    $pattern = the pattern or FILES_ key in the actual table.
+    foreach($category in $FilenameViolations.Keys) {
+        foreach($subcategory in $FilenameViolations.$category.Keys) {
+            # Set up a variable to patchwerk into the final value to add to the notification.
+            $local:addToReport = $FilenameViolations.$category.$subcategory
+            # Automatically set the "subcategory" field as the Location member, indicating the location of where
+            #  the filename violation(s) occurred. This is a 'phantom' field that's not actually part of the deltas
+            #  object itself, but rather is used only in the notification presentation.
+            $local:addToReport.Add("Location", $subcategory)
+            #$local:addToReport | Add-Member -Name Location -Value $subcategory -Type NoteProperty
+            # For each tracked pattern, check the keys in the object against them (improve later) and clean from there.
+            #    This helps to easily generate some tables that correspond dynamically to each entered/tracked pattern.
+            foreach($pattern in $global:CliMonConfig.FilenameTracking.Patterns.Keys) {
+                Write-Debug -Message "$category --> $subcategory --> $pattern" -Threshold 2 -Prefix '>>>>>>'
+                # Select only fields relevant to the current pattern.
+                $local:selectedFields = $FilenameViolations.$category.$subcategory.Keys `
+                    | Where-Object { $_ -Like "$($pattern)*" }
+                #Write-host "$pattern"
+                # If "selectedFields" contains any valid (non-null) fields, proceed.
+                if($local:selectedFields.Count -gt 0 -And $null -ne $local:selectedFields[0]) {
+                    # Convert the array to a list and add on the static Location attribute.
+                    $local:selectedFields = [System.Collections.ArrayList]@($local:selectedFields)
+                    [void]$local:selectedFields.Add("Location")
+                    Write-Debug -Message "Selected fields in subcategory '$subcategory':" -Threshold 3 -Prefix '>>>>>>>>'
+                    $local:selectedFields | ForEach-Object { Write-Debug -Message "$_" -Threshold 3 -Prefix '>>>>>>>>>>' }
+                    # Convert the "addToReport" object (the subcategory content) into a PSCustomObject type.
+                    #  Or rather enforce it being a PSCustomObject. The select the sorted fields and convert the table
+                    #  into an HTML table.
+                    $local:intermediateTable = (($local:addToReport | ConvertTo-Json | ConvertFrom-Json) `
+                        | Select-Object ($local:selectedFields | Sort-Object) `
+                        | ConvertTo-Html -Fragment)
+                    # Cheaply and hackily replace some of the table-header field names after the fact to make the
+                    #  notification's presentation more legible.
+                    $local:intermediateTable = $local:intermediateTable -Replace `
+                        ">Files_$([Regex]::Escape($pattern))</th", ">Most Recent Files</th"
+                    $local:intermediateTable = $local:intermediateTable -Replace `
+                        ">Threshold_$([Regex]::Escape($pattern))</th", ">Threshold to Pass</th"
+                    $local:intermediateTable = $local:intermediateTable -Replace `
+                        ">$([Regex]::Escape($pattern))</th", ">New Count</th"
+                    $local:intermediateTable = $local:intermediateTable -Replace `
+                        ">__Prior_$([Regex]::Escape($pattern))</th", ">Previous Count</th"
+                    # Add it to the tables string and thusly onto the body pipeline.
+                    [void]$local:allTables.Append(
+                        "<span style='color:black;font-size:14px;'><b>Pattern</b>: $($pattern)</span><br />`n" `
+                        + $local:intermediateTable
+                    )
+                }
+            }
+        }
+    }
+    # Return the finalized StringBuilder object.
+    [void]$local:allTables.Append("<br /><br />`n`n</div>`n")
+    return $local:allTables.ToString()
+}
+
+
 
 # Helper function to insert the given string into the "template" for a single client section
 #  within the generated notification. This includes all content between each horizontal rule
@@ -590,7 +722,7 @@ Function Get-ClientNotificationSection() {
         Write-Debug -Message "Client RealName Translation is disabled or the name was not found." `
             -Threshold 1 -Prefix '>>>>'
     }
-    [void]$local:finalClientSection.Append("</h2>`n$($NotificationBody)</td></tr></table>`n")
+    [void]$local:finalClientSection.Append("</h2>`n`n$($NotificationBody)</td></tr></table>`n")
     return $local:finalClientSection.ToString()
 }
 
@@ -638,7 +770,28 @@ Function Add-TimeInformationToBody() {
     if($global:CliMonGenTimer.IsRunning) { $global:CliMonGenTimer.Stop() }
     # Return an HTML string with the time-stamped information.
     return ("<p class='SummaryText'>There were <strong>$($global:CliMonClients.Count) " +
-        "valid clients that were checked.</strong><br />`n" +
+        "valid clients</strong> that were reported, and <em>$($global:CliMonDeadSessions.Count)" +
+        " broken client sessions</em>.<br />`n" +
         "This notification was generated in <strong>$($global:CliMonGenTimer.Elapsed.Minutes) " +
         "minutes and $($global:CliMonGenTimer.Elapsed.Seconds) seconds</strong>.</p>`n`n")
+}
+
+
+
+# If any dead sessions were detected along the way, append the list of dead hostnames to the body
+#  of the notification. This should be a rare occurrence but is a fairly important item.
+Function Add-DeadClientsToBody() {
+    $local:returnString = [System.Text.StringBuilder]::new()
+    [void]$local:returnString.Append("<hr /><h2>Dead Sessions</h2>`n`n")
+    [void]$local:returnString.Append(
+        ("<p class='SummaryText'>The following <strong>client hostnames</strong> had their" +
+         " sessions interrupted or killed in the middle of client surveillance.<br /><em>" +
+         " These clients <strong>have not been tracked</strong> and will have their reports" +
+         " rolled back to their last successful evaluations</em>.</p><ul>`n")
+    )
+    foreach($clientName in $global:CliMonDeadSessions) {
+        [void]$local:returnString.Append("<li style='color:#AA6622;'>  $($clientName)</li>`n")
+    }
+    [void]$local:returnString.Append("</ul>`n`n")
+    return $local:returnString.ToString()
 }

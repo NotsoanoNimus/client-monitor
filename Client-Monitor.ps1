@@ -100,6 +100,8 @@ param(
     [String]$ConfigFile = "$(Split-Path $PSCommandPath)\Client-MonitorConfig.ps1",
     [PSCredential]$SmtpCredential = $null
 )
+# Immediately clear all errors.
+$Error.Clear()
 # Start with a few basic parameter checks and static values based on the paramters.
 $CompressJSON = (-Not $NoMini)
 # Ensure that the ConfigFile exists.
@@ -151,13 +153,13 @@ if($global:CliMonConfig.ConfigImported -ne $True) {
 # I left my mess here as a demonstration of how simple it is to make "permanent" tweaks
 #  to some of the parameters a user might otherwise have to pass in every time.
 #$global:CliMonConfig.Verbosity = 5
-#$ClientsList = 'C:\temp\clients.txt'
+$ClientsList = 'C:\temp\clients.txt'
 #$CompressJSON = $False
 #$DeltasReport = $True
 #$SnapshotMode = $True
 #$NoFilters = $True
 #$FlatReportCsv = $True
-#$Ephemeral = $True
+$Ephemeral = $True
 #$NoNotifications = $True
 #$AsAttachment = $True
 
@@ -172,7 +174,7 @@ Function Invoke-MainRoutine() {
     #  script-terminating error. This may need some work later on.
     trap {
         Write-Host "A critical error was encountered and the script was terminated: $_" `
-            -ForegroundColor Red -BackgroundColor White
+            -ForegroundColor Red -BackgroundColor DarkGray
         Complete-Sessions
         # Tell the script that there was a FATAL failure.
         #  All created reports should be rolled back.

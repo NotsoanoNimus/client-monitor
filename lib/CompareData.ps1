@@ -38,7 +38,7 @@ $global:CliMonEmptyDeltas = [Ordered]@{
     NewStoreApps = @{}; RemovedStoreApps = @{}; ChangedStoreApps = @{}
     NewStartupApps = @{}; RemovedStartupApps = @{}; ChangedStartupApps = @{}
     NewScheduledTasks = @{}; RemovedScheduledTasks = @{}; ChangedScheduledTasks = @{}
-    FilenameViolations = @{};
+    FilenameViolations = @{}; MatchedSubnets = $null;
 }
 
 # Called from the main method. Populate the final "CliMonDeltas" object with the differences
@@ -60,7 +60,7 @@ Function Compare-EnvironmentDeltas() {
             NewStoreApps = @{}; RemovedStoreApps = @{}; ChangedStoreApps = @{}
             NewStartupApps = @{}; RemovedStartupApps = @{}; ChangedStartupApps = @{}
             NewScheduledTasks = @{}; RemovedScheduledTasks = @{}; ChangedScheduledTasks = @{}
-            FilenameViolations = @{};
+            FilenameViolations = @{}; MatchedSubnets = $null;
         }
         # Collect the top of the list for most recent files/reports matching the given hostname.
         #  Any $null return from this function indicates failure to retrieve the report.
@@ -86,6 +86,10 @@ Function Compare-EnvironmentDeltas() {
         #  both the DeltasReport (if enabled) and the notifications section.
         $deltasObject.Add("OnlineStatusChange", $client.Profile.OnlineStatusChange)
         $deltasObject.Add("InvokableStatusChange", $client.Profile.InvokableStatusChange)
+        # Check the client's IP address(es) against the list of 'alert' subnets.
+        #  Populates the "MatchedSubnets" property of the Deltas reference object.
+        $deltasObject.MatchedSubnets =
+            Get-IpAddressAlertSubnets -TargetClient $client
         # Set up a "sensor" variable to detect if the sub-keys within each Key in the deltas tables
         #  are different in quantity across any of the property types. If a difference is detected
         #  in the number of sub-keys for any one of the properties, the client had some kind of
@@ -101,7 +105,7 @@ Function Compare-EnvironmentDeltas() {
             $deltasObject.InvokableStatusChange -eq $True
         ) {
             # Add the deltasObject to the global tracking hashtable, indexed by client hostname.
-            Write-Host "---- Changes were detected for this client. Tracking." -ForegroundColor Yellow
+            Write-Host "---- Changes or alerts were detected for this client. Tracking." -ForegroundColor Yellow
             $global:CliMonDeltas.Add($client.Hostname, $deltasObject)
         }
     }
@@ -388,32 +392,56 @@ Function Compare-ClientFiles() {
 
 
 
-# Helper function to get a report from the $ReportsDirectory location, as specified in the config.
-#  NOTE: Reviewing the code, it doesn't seem very necessary based on what it's doing, but it's
-#  good to have this function to explicitly test the given filename within the ReportsDirectory.
-Function Get-ClientReportHelper() {
-    param([Object]$TargetClient, [String]$TargetFilename)
-    Write-Debug -Message "Called Report Helper for client: $($TargetClient.Hostname)" -Threshold 4 -Prefix '>>>>'
-    Write-Debug -Message "Report Filename: $TargetFilename" -Threshold 4 -Prefix '>>>>>>'
-    # Use a regex to extract the "date" string from the target filename.
-    $local:reportDate = [Regex]::Matches($TargetFilename, '\d{4}-\d{2}-\d{2}-\d{2}_\d{2}')[0].Value
-    Write-Debug -Message "Extracted report date: $($local:reportDate)" -Threshold 4 -Prefix '>>>>>>'
-    try {
-        # Return the content of the filename matching the below pattern, converted from JSON.
-        $local:reportContent = (
-            Get-Content (
-                "{0}\Report-{1}-{2}.txt" -f `
-                    $global:CliMonConfig.ReportsDirectory, `
-                    $TargetClient.Hostname, `
-                    $local:reportDate
-            ) | ConvertFrom-Json
-        )
-        return $local:reportContent
-    } catch {
-        Write-Host "~~ Could not get the requested client report."
-        return $null
+# Return any information or alerts about the client's IP address, if it happens to fall within
+#  one or more of the "alert" IP subnets defined in the configuration. If any alert subnets are
+#  matched from the configuration, they will be included in the returned array.
+Function Get-IpAddressAlertSubnets() {
+    param([Object]$TargetClient)
+    Write-Host "---- Checking the client IP address(es) against alert subnets."
+    # Define the alert subnets as any IP addresses matching the given CIDR notation regexes.
+    # NOTE: These regexes aren't foolproof, they're only a guide/deterrent.
+    $local:alert4Subnets = [System.Collections.ArrayList](
+        $global:CliMonConfig.Notifications.IpAddressAlerts.IpRanges -Match `
+        '^([0-9]{1,3}\.){3}[0-9]{1,3}\/(3[0-2]|[12]?[0-9])$'
+    )
+    $local:alert6Subnets = [System.Collections.ArrayList](
+        $global:CliMonConfig.Notifications.IpAddressAlerts.IpRanges -Match `
+        '^(([0-9a-fA-F]{1,4}:{1,2}){0,7}|::)([0-9a-fA-F]{1,4})\/(1[0-2][0-9]|[0-9]{1,2})$'
+    )
+    # If the combination of IPv4 and IPv6 addresses doesn't match the total count of the array,
+    #  then something is off and the user's attention should be brought to it.
+    if(($local:alert4Subnets.Count + $local:alert6Subnets.Count) -ne
+      $global:CliMonConfig.Notifications.IpAddressAlerts.IpRanges.Count) {
+        Write-Host ("~~~~ The configuration node at 'Config.Notifications." +
+            "IpAddressAlerts.IpRanges' contains invalid values!") -ForegroundColor Red
+        Write-Host ("~~~~~~ Please ensure the IP subnets configured therein are VALID " +
+            "CIDR subnets.") -ForegroundColor Red
     }
+    # Running the membership check in two places allows the script to run a detection against
+    #  BOTH the IPv4/6 address pools that the client owns, in case they land in an alert subnet
+    #  inside of both subnets.
+    # NOTE: The "Get-CliMonSubnetMembership" function is defined in the Miscellaneous library file.
+    $local:ipv4Memberships = @()
+    $local:ipv6Memberships = @()
+    if($null -ne $TargetClient.IpAddress) {
+        # Check the client against any IPv4 subnets.
+        $local:ipv4Memberships =
+            Get-CliMonSubnetMembership -HostIps @($TargetClient.IpAddress) -Subnets @($local:alert4Subnets)
+    }
+    if($null -ne $TargetClient.Ip6Address) {
+        # Check the client against any IPv6 subnets.
+        $local:ipv6Memberships =
+            Get-CliMonSubnetMembership -HostIps @($TargetClient.Ip6Address) -Subnets @($local:alert6Subnets) -IPv6
+    }
+    # Return a combined array of the two arrays, if anything was captured. Otherwise, keep it $null.
+    $local:returnData = $null
+    if($local:ipv4Memberships.Count -gt 0) { $local:returnData += $local:ipv4Memberships }
+    if($local:ipv6Memberships.Count -gt 0) { $local:returnData += $local:ipv6Memberships }
+    return $local:returnData
+    #if($local:returnData.Count -gt 0) { return $local:returnData } else { return $null }
 }
+
+
 
 # Get the most recent report using the "LastWriteTime" filter based on client hostname.
 Function Get-ClientReport() {
@@ -447,5 +475,32 @@ Function Get-ClientReport() {
         $recentReports = $recentReports[$local:whichReport].Name
         return (Get-ClientReportHelper `
             -TargetClient $TargetClient -TargetFilename $recentReports)
+    }
+}
+
+# Helper function to get a report from the $ReportsDirectory location, as specified in the config.
+#  NOTE: Reviewing the code, it doesn't seem very necessary based on what it's doing, but it's
+#  good to have this function to explicitly test the given filename within the ReportsDirectory.
+Function Get-ClientReportHelper() {
+    param([Object]$TargetClient, [String]$TargetFilename)
+    Write-Debug -Message "Called Report Helper for client: $($TargetClient.Hostname)" -Threshold 4 -Prefix '>>>>'
+    Write-Debug -Message "Report Filename: $TargetFilename" -Threshold 4 -Prefix '>>>>>>'
+    # Use a regex to extract the "date" string from the target filename.
+    $local:reportDate = [Regex]::Matches($TargetFilename, '\d{4}-\d{2}-\d{2}-\d{2}_\d{2}')[0].Value
+    Write-Debug -Message "Extracted report date: $($local:reportDate)" -Threshold 4 -Prefix '>>>>>>'
+    try {
+        # Return the content of the filename matching the below pattern, converted from JSON.
+        $local:reportContent = (
+            Get-Content (
+                "{0}\Report-{1}-{2}.txt" -f `
+                    $global:CliMonConfig.ReportsDirectory, `
+                    $TargetClient.Hostname, `
+                    $local:reportDate
+            ) | ConvertFrom-Json
+        )
+        return $local:reportContent
+    } catch {
+        Write-Host "~~ Could not get the requested client report."
+        return $null
     }
 }
