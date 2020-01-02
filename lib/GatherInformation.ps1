@@ -349,6 +349,7 @@ Function Mount-AllUserHives() {
     if($null -eq $local:mountResults) {
         # If this is null, that is acceptable. It simply means that no hives whatsoever were
         #  mounted manually by the script across all clients (uncommon but possible).
+        Write-Host "-- No user registry hives were mounted across any of the clients."
     } else {
         foreach($client in $Clients) {
             # Display the debug output for the client.
@@ -381,6 +382,10 @@ Function Mount-AllUserHives() {
 #  InstalledApps, Services, StoreApps, StartupApps, ScheduledTasks
 Function Get-AllClientProfiles() {
     param([Object[]]$Clients)
+    Write-Host "`n`n`nGetting all client profile information." -ForegroundColor Green
+    Write-Host "-- Target categories: $($global:CliMonConfig.TrackedValues.Keys | ForEach-Object {
+        "`n---- $_ :  $($global:CliMonConfig.TrackedValues.$_ -Join ', ')"
+    })"
     # The below script block will harvest ALL target information from the client machine,
     #  with the exception of filename tracking. It return a Profile object.
     [ScriptBlock]$local:doGetClientProfile = {
@@ -821,8 +826,8 @@ Function Get-AllClientTrackedFiles() {
                 Write-Debug -Message "Matched $($local:fileCount) files." -Threshold 3 -Prefix '>>>>>>>>'
                 # Add the count onto the return data, as well as associated filenames for later.
                 $local:returnData.Add($pattern, $local:fileCount)
-                $local:returnData.Add("FILES_$($pattern)", ($local:matchedFiles `
-                    | Select-Object -Last $global:CliMonConfig.FilenameTracking.ViewLimit))
+                $local:returnData.Add("FILES_$($pattern)", (($local:matchedFiles `
+                    | Select-Object -Last $global:CliMonConfig.FilenameTracking.ViewLimit) -Join "<br />`n"))
             }
             # Send back the return data.
             return $local:returnData

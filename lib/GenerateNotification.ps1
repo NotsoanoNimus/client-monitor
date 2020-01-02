@@ -106,15 +106,16 @@ Function Write-CliMonNotification() {
             if($client.Profile.IsOnline -eq $False -Or $client.Profile.IsInvokable -eq $False) {
                 # This will finalize the client section if they have gone offline.
                 Write-Host "------ Client is marked as unreachable. Moving on."
-                [void]$BodyText_Container.Append($local:BodyText_PerClient.ToString())
+                [void]$BodyText_Container.Append((Get-ClientNotificationSection `
+                    -NotificationBody $local:BodyText_PerClient.ToString() -TargetClient $client))
                 continue
             }
             # Process any filename-tracker deltas that were caught, if tracking is enabled.
             if($global:CliMonConfig.FilenameTracking.Enabled -eq $True -And
               $clientDeltas.FilenameViolations.Count -gt 0) {
                 Write-Host "------ Filename Tracker violations were detected. Parsing."
-                [void]$local:BodyText_PerClient.Append(
-                    (Get-FilenameTrackingSection -FilenameViolations $clientDeltas.FilenameViolations))
+                [void]$local:BodyText_PerClient.Append((Get-FilenameTrackingSection `
+                    -FilenameViolations $clientDeltas.FilenameViolations))
             }
             # -----------------------------------------
             # Use a modularized function to add to the report body if the given category/section
@@ -525,10 +526,8 @@ Function Get-ReachabilityChange() {
         [void]$local:returnData.Append("'>$($local:clientWas)</span>, and is now <span class='")
         [void]$local:returnData.Append("$($global:CliMonConfig.Notifications.HTMLNewValClass)")
         [void]$local:returnData.Append("'>$($local:clientIs)</span>.`n</div>")
-        # If for any reason the client is not reachable, finish up the section for the client.
+        # If for any reason the client is not reachable, log it.
         if($TargetClient.Profile.IsOnline -eq $False -Or $TargetClient.Profile.IsInvokable -eq $False) {
-            $local:returnData = ((Get-ClientNotificationSection `
-                -NotificationBody $local:returnData.ToString() -TargetClient $TargetClient))
             Write-Debug -Message "The target is currently unreachable." -Threshold 2 -Prefix '>>>>>>'
         }
         # Return the "returnData" back to the global "wrapper".
@@ -641,53 +640,51 @@ Function Get-FilenameTrackingSection() {
         foreach($subcategory in $FilenameViolations.$category.Keys) {
             # Set up a variable to patchwerk into the final value to add to the notification.
             $local:addToReport = $FilenameViolations.$category.$subcategory
-            # Automatically set the "subcategory" field as the Location member, indicating the location of where
-            #  the filename violation(s) occurred. This is a 'phantom' field that's not actually part of the deltas
-            #  object itself, but rather is used only in the notification presentation.
-            $local:addToReport.Add("Location", $subcategory)
-            #$local:addToReport | Add-Member -Name Location -Value $subcategory -Type NoteProperty
-            # For each tracked pattern, check the keys in the object against them (improve later) and clean from there.
-            #    This helps to easily generate some tables that correspond dynamically to each entered/tracked pattern.
+            # Set up a boolean to track whether any patterns had changes for this subcategory.
+            $local:isChangesPerSub = $False
+            # Create a list to hold all per-pattern changes under the given subcategory. These are later combined
+            #  into a single HTML table, if any are added.
+            $local:allTablesPerSub = [System.Collections.ArrayList]@()
+            # For each tracked pattern, check the keys in the object against them and build from there.
+            #    This helps to easily generate some tables that correspond to each entered/tracked pattern for the subcategory.
             foreach($pattern in $global:CliMonConfig.FilenameTracking.Patterns.Keys) {
                 Write-Debug -Message "$category --> $subcategory --> $pattern" -Threshold 2 -Prefix '>>>>>>'
                 # Select only fields relevant to the current pattern.
                 $local:selectedFields = $FilenameViolations.$category.$subcategory.Keys `
                     | Where-Object { $_ -Like "*$($pattern)*" }
-                #Write-host "$pattern"
-                # If "selectedFields" contains any valid (non-null) fields, proceed.
+                # If "selectedFields" contains any valid (non-null) fields for the current pattern, proceed.
                 if($local:selectedFields.Count -gt 0 -And $null -ne $local:selectedFields[0]) {
-                    # Convert the array to a list and add on the static Location attribute.
-                    $local:selectedFields = [System.Collections.ArrayList]@($local:selectedFields)
-                    [void]$local:selectedFields.Add("Location")
-                    Write-Debug -Message "Selected fields in subcategory '$subcategory':" -Threshold 3 -Prefix '>>>>>>>>'
-                    $local:selectedFields | ForEach-Object { Write-Debug -Message "$_" -Threshold 3 -Prefix '>>>>>>>>>>' }
-                    # Convert the "addToReport" object (the subcategory content) into a PSCustomObject type.
-                    #  Or rather enforce it being a PSCustomObject. The select the sorted fields and convert the table
-                    #  into an HTML table.
-                    $local:intermediateTable = (($local:addToReport | ConvertTo-Json | ConvertFrom-Json) `
-                        | Select-Object ($local:selectedFields | Sort-Object) `
-                        | ConvertTo-Html -Fragment)
-                    # Cheaply and hackily replace some of the table-header field names after the fact to make the
-                    #  notification's presentation more legible.
-                    $local:intermediateTable = $local:intermediateTable -Replace `
-                        ">Files_$([Regex]::Escape($pattern))</th", ">Most Recent Files</th"
-                    $local:intermediateTable = $local:intermediateTable -Replace `
-                        ">Threshold_$([Regex]::Escape($pattern))</th", ">Threshold to Pass</th"
-                    $local:intermediateTable = $local:intermediateTable -Replace `
-                        ">$([Regex]::Escape($pattern))</th", ">New Count</th"
-                    $local:intermediateTable = $local:intermediateTable -Replace `
-                        ">__Prior_$([Regex]::Escape($pattern))</th", ">Previous Count</th"
-                    # Add it to the tables string and thusly onto the body pipeline.
-                    [void]$local:allTables.Append(
-                        "<span style='color:black;font-size:14px;'><b>Pattern</b>: $($pattern)</span><br />`n" `
-                        + $local:intermediateTable
-                    )
+                    Write-Debug -Message "Detected fields in subcategory '$subcategory' for pattern '$pattern'." -Threshold 3 -Prefix '>>>>>>>>'
+                    # Mark that the subcategory had a pattern with a noted change.
+                    $local:isChangesPerSub = $True
+                    # Build a new intermediate hashtable with prettified field names and valuable information.
+                    $local:addToReportIntermediate = @{
+                        "Pattern" = $pattern;
+                        "New Count" = $local:addToReport."$pattern";
+                        "Previous Count" = $local:addToReport."__Prior_$pattern";
+                        "Difference" = ($local:addToReport."$pattern" - $local:addToReport."__Prior_$pattern");
+                        "Threshold to Pass" = $local:addToReport."Threshold_$pattern";
+                        "Most Recent Files ($($global:CliMonConfig.FilenameTracking.ViewLimit))" = $local:addToReport."Files_$pattern";
+                    }
+                    # Add the intermediate hashtable to the final list of all table items in the subcategory.
+                    [void]$local:allTablesPerSub.Add(($local:addToReportIntermediate | ConvertTo-Json | ConvertFrom-Json))
                 }
+            }
+            # If there were changes found within the subcategory, append to the "allTables" value.
+            #  NOTE: This carefully (and cheaply) replaces escaped <br /> tags from the Gathering stage of the script
+            #         with newline characters. This is hacky BUT it's better than removing the escaped characters for
+            #         the entire content of the HTML tables. This helps prevent errors in the HTML from patterns that
+            #         include special HTML characters or sequences.
+            if($local:isChangesPerSub -eq $True) {
+                [void]$local:allTables.Append(
+                    "<span style='color:black;font-size:14px;'><b>Location</b>: $($subcategory)</span><br />`n" +
+                    (($local:allTablesPerSub | ConvertTo-Html -Fragment) -Replace '&lt;br \/&gt;','<br />') + "<br />`n"
+                )
             }
         }
     }
     # Return the finalized StringBuilder object.
-    [void]$local:allTables.Append("<br /><br />`n`n</div>`n")
+    [void]$local:allTables.Append("<br />`n</div>`n`n")
     return $local:allTables.ToString()
 }
 
