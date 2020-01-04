@@ -86,10 +86,12 @@ Function Compare-EnvironmentDeltas() {
         #  both the DeltasReport (if enabled) and the notifications section.
         $deltasObject.Add("OnlineStatusChange", $client.Profile.OnlineStatusChange)
         $deltasObject.Add("InvokableStatusChange", $client.Profile.InvokableStatusChange)
-        # Check the client's IP address(es) against the list of 'alert' subnets.
+        # If enabled, check the client's IP address(es) against the list of 'alert' subnets.
         #  Populates the "MatchedSubnets" property of the Deltas reference object.
-        $deltasObject.MatchedSubnets =
-            Get-IpAddressAlertSubnets -TargetClient $client
+        if($global:CliMonConfig.Notifications.IpAddressAlerts.Enabled -eq $True) {
+            $deltasObject.MatchedSubnets =
+                Get-IpAddressAlertSubnets -TargetClient $client
+        }
         # Set up a "sensor" variable to detect if the sub-keys within each Key in the deltas tables
         #  are different in quantity across any of the property types. If a difference is detected
         #  in the number of sub-keys for any one of the properties, the client had some kind of
