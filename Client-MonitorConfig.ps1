@@ -380,7 +380,7 @@ $global:CliMonConfig = @{
 		HTMLBackgroundColors = @{
 			$True = "FFFFFF"; $False = "EDEDED";
 		}
-		# Three advanced settings for the HTML notifications. These are just class names for certain
+		# Some "advanced" settings for the HTML notifications. These are just class names for certain
 		#  classes used within the HTML notifs. The option to change them is present in the event
 		#  that the end user has a stylistic reason to do so, or the names are clashing somehow.
 		# They're important to define, less important to change.
@@ -388,6 +388,7 @@ $global:CliMonConfig = @{
 		HTMLPriorValClass = 'PriorText';
 		HTMLDiffValClass = 'DifferentText';
 		HTMLChangedValClass = 'ChangedText';
+		HTMLSnapshotValClass = 'SnapshotText';
 		# Strip out redundant table headers for items that fall under the same client > category.
 		HTMLStripTableHeaders = $True
 	};
@@ -432,6 +433,7 @@ $global:CliMonConfig.Notifications.HTMLWrapper = @"
 	.SummaryText { font-size: 14px; color: black; }
 	.$($global:CliMonConfig.Notifications.HTMLPriorValClass) { color: #AA2222; font-size: 12px; }
 	.$($global:CliMonConfig.Notifications.HTMLNewValClass) { color: #2222AA; font-size: 12px; }
+	.$($global:CliMonConfig.Notifications.HTMLSnapshotValClass) { color: #226622; font-size: 12px; }
 	.$($global:CliMonConfig.Notifications.HTMLChangedValClass) { color: black; font-size: 12px; }
 	.$($global:CliMonConfig.Notifications.HTMLDiffValClass) { font-weight: bold; font-style: italic; }
 	.SectionHeader { font-size: 18px; font-weight: bold; text-decoration: underline; }

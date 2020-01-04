@@ -292,7 +292,11 @@ Function Get-GenericNotificationTable() {
     $local:ItemName = $CliMonItemNameFields.$ItemType
     # Set up a short-handed variable for each span tag.
     $local:spanTypes = @{
-        New = "<span class='$($global:CliMonConfig.Notifications.HTMLNewValClass)'>";
+        New = "<span class='$(
+            if($SnapshotMode -eq $False) {
+                $global:CliMonConfig.Notifications.HTMLNewValClass
+            } else { $global:CliMonConfig.Notifications.HTMLSnapshotValClass }
+        )'>";
         Removed = "<span class='$($global:CliMonConfig.Notifications.HTMLPriorValClass)'>";
         Changed = "<span class='$($global:CliMonConfig.Notifications.HTMLChangedValClass)'>";
         Different = "<span class='$($global:CliMonConfig.Notifications.HTMLDiffValClass)'>";
