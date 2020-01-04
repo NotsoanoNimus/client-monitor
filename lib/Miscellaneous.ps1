@@ -360,7 +360,8 @@ Function Send-CliMonCrashNotification() {
     param([Object]$ErrorItem = $null)
     # Build the notification body quickly, and set up the Send-MailMessage params.
     $local:emailBody = $global:CliMonConfig.Notifications.OnError.Body -Replace '\$_', '$$$$_'
-    $local:errorText = $Error | ForEach-Object { "<li style='color:red;'>$_`n</li>" }
+    $local:errorText = $Error | ForEach-Object {
+        "<li style='color:red;'>$(($_ | Out-String) -replace "`r?`n","<br />`n")`n</li>" }
     $local:emailBody = if($null -ne $_) {
         $local:emailBody -Replace '\[\[ERRORTEXT\]\]', "<ul>$($local:errorText)</ul>"
     } else { $local:emailBody -Replace '\[\[ERRORTEXT\]\]', 'Unknown Error' }

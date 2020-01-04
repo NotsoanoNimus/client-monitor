@@ -188,7 +188,7 @@ Class CliMonClient {
             # Get the table from the config, search for the key/indexValue, and get the value in the table.
             $local:directTable = $global:CliMonConfig.RealnameTranslation.DirectObject.Table
             $local:fetchedName = $local:directTable."$($local:indexValue)"
-            return (if($null -eq $local:fetchedName) { "" } else { $local:fetchedName })
+            if($null -eq $local:fetchedName) { return "" } else { return $local:fetchedName }
         } else {
             # If there's an invalid query type, return an empty string.
             return ""
