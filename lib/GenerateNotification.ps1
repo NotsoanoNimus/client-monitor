@@ -108,6 +108,8 @@ Function Write-CliMonNotification() {
                 Write-Host "------ Client is marked as unreachable. Moving on."
                 [void]$BodyText_Container.Append((Get-ClientNotificationSection `
                     -NotificationBody $local:BodyText_PerClient.ToString() -TargetClient $client))
+                # Flip the background colors.
+                $global:CliMonFlipColors = -Not $global:CliMonFlipColors
                 continue
             }
             # Process any filename-tracker deltas that were caught, if tracking is enabled.

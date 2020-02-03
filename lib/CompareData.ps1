@@ -49,6 +49,25 @@ Function Compare-EnvironmentDeltas() {
     # This is a preparatory step, to forcibly cause a comparison between a property that is not
     #  intended to be manually removable by a user of this script.
     $global:CliMonConfig.TrackedValues.StoreApps += "PackageUserInformation"
+    # Check if the automatic tracking/filtering of version changes is enabled.
+    #  If so, get the current list of applications that are pre-filtered and store it in a global value.
+    if($global:CliMonConfig.Notifications.InstallationChanges.Enabled -eq $True) {
+        # Declared in this scope (just in case).
+        $local:readInApplicationFilters = @{}
+        try {
+            Write-Debug -Message "Getting automatic installation changes tracking information" `
+                -Threshold 1 -Prefix '>>>>'
+            $local:readInApplicationFilters = Get-InstalledAppsTrackerContents
+        } catch {
+            $local:readInApplicationFilters = (@{} | ConvertTo-Json)
+            Write-Host ("~~~~ Automatic application tracking is enabled but the ReportLocation" +
+                " couldn't be read. No applications will be tracked.")
+        }
+        # Set the value of the global tracker for installed application updates to a "snapshot" of the
+        #  filters BEFORE they're updated at all. This allows things that are detected on this run to 
+        #  be included in the report still (but then suppresses them in future reports).
+        $global:CliMonUpdatedApplicationTrackingFilters = $local:readInApplicationFilters
+    }
     # Set up scaffolding for the deltas object. It will be a hashtable of per-client-hostname
     #  difference objects, as defined in the below loop.
     $global:CliMonDeltas = @{}
@@ -189,26 +208,6 @@ Function Compare-ClientDeltas() {
 		[Object]$Prior,
 		[Object]$PriorIndex
     )
-    # Firstly, check if the automatic tracking/filtering of version changes is enabled.
-    #  If so, get the current list of applications that are pre-filtered.
-    if(($global:CliMonConfig.Notifications.InstallationChanges.Automatic -eq $True) -And
-      ($CompareProperties.Contains("DisplayName")) -And
-      ($CompareProperties.Contains("DisplayVersion"))) {
-        try {
-            Write-Debug -Message "Getting automatic installation changes tracking information" `
-                -Threshold 1 -Prefix '>>>>'
-            $local:readInApplicationFilters = Get-InstalledAppsTrackerContents
-        } catch {
-            $local:readInApplicationFilters = (@{} | ConvertTo-Json)
-            Write-Host ("~~~~ Automatic application tracking is enabled but the ReportLocation" +
-                " couldn't be read. No applications will be tracked.")
-        }
-        # Set the value of the global tracker for installed application updates to a "snapshot" of the
-        #  filters BEFORE they're updated at all. This allows things that are detected on this run to 
-        #  be included in the report still (but then suppresses them in future reports).
-        $global:CliMonUpdatedApplicationTrackingFilters = $local:readInApplicationFilters
-    }
-
     # Go through each item in the index for the Current selection and get the deltas.
     Write-Debug -Message "Iterating through CURRENT keys to search for differences." -Threshold 2 -Prefix '>>>>'
     foreach($item in $CurrentIndex) {
@@ -289,6 +288,8 @@ Function Compare-ClientDeltas() {
     }
 }
 
+# A helper function that attempts to read the contents of the installation changes tracker file
+#  and returns a converted value if the conversion is possible, and an empty object if not.
 Function Get-InstalledAppsTrackerContents() {
     $local:prefilterTrackers = (@{} | ConvertTo-Json)
     if(Test-Path "$($global:CliMonConfig.Notifications.InstallationChanges.ReportLocation)") {

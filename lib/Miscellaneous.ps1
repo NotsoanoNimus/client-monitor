@@ -267,59 +267,59 @@ Function Get-CliMonSubnetMembership() {
 Function Invoke-CliMonCleanup() {
     param([Switch]$TrappedError = $False, [Object]$ErrorItem = $null)
     Write-Debug -Message "Running Client Monitor cleanup tasks." -Threshold 1 -Prefix '>>'
-    try {
-        if(($TrappedError -eq $True -And $global:CliMonConfig.NoRevert -eq $False) -Or
-        $Ephemeral -eq $True) {
-            if($global:CliMonConfig.Notifications.OnError.Enabled -eq $True `
-              -And $TrappedError -eq $True -And $Ephemeral -eq $False) {
-                Write-Host ("~~~~ Dispatching a notification of the crash according to the configuration.")
+    if(($TrappedError -eq $True -And $global:CliMonConfig.NoRevert -eq $False) -Or
+    $Ephemeral -eq $True) {
+        if($global:CliMonConfig.Notifications.OnError.Enabled -eq $True `
+            -And $TrappedError -eq $True -And $Ephemeral -eq $False) {
+            Write-Host ("~~~~ Dispatching a notification of the crash according to the configuration.")
+            try {
+                Send-CliMonCrashNotification -ErrorItem $ErrorItem
+            } catch {
+                Write-Host ("~~~~~~ FAILED TO SEND THE CRASH NOTIFICATION. PLEASE CHECK THE CONFIGURATION!") `
+                    -ForegroundColor Red
+            }
+        }
+        if($Ephemeral -eq $False) {
+            Write-Host ("~~ A critical error was encountered." +
+                " Reverting all client reports and trackers for this session.")
+        } elseif($Ephemeral -eq $True) {
+            Write-Host ("-- The script was running in Ephemeral Mode. Reverting all client reports" +
+                " and trackers for this session.")
+        }
+        Write-Debug -Message "The script appears to have exited in error or in a temporary state." -Threshold 2 -Prefix '>>>>'
+        if($global:CliMonEmailFailure -eq $True) {
+            Write-Host "~~~~ The email notification failed to dispatch. Please check your settings."
+            Write-Host "~~~~ SMTP Error Description: $($global:CliMonEmailErrorText)"
+        }
+        # If ephemeral is NOT engaged, and NoRevert is True, do NOT remove the reports.
+        if($Ephemeral -eq $False -And $global:CliMonConfig.NoRevert -eq $True) { return }
+        # An error was trapped in some way. Remove any reports generated in this session.
+        Write-Debug -Message "Removing reports generated in this session." -Threshold 2 -Prefix '>>>>'
+        $global:CliMonGeneratedReports | ForEach-Object {
+            Write-Debug -Message "Report: $_" -Threshold 3 -Prefix '>>>>>>'
+        }
+        foreach($report in $global:CliMonGeneratedReports) {
+            # Check for the file's existence, then try to delete it.
+            if(Test-Path $report) {
                 try {
-                    Send-CliMonCrashNotification -ErrorItem $ErrorItem
-                } catch {
-                    Write-Host ("~~~~~~ FAILED TO SEND THE CRASH NOTIFICATION. PLEASE CHECK THE CONFIGURATION!") `
-                        -ForegroundColor Red
-                }
+                    Remove-Item -Path $report -Force
+                    Write-Debug -Message "Report '$report' removed." -Threshold 3 -Prefix '>>>>>>'
+                } catch { }
             }
-            if($Ephemeral -eq $False) {
-                Write-Host ("~~ A critical error was encountered." +
-                    " Reverting all client reports and trackers for this session.")
-            } elseif($Ephemeral -eq $True) {
-                Write-Host ("-- The script was running in Ephemeral Mode. Reverting all client reports" +
-                    " and trackers for this session.")
-            }
-            Write-Debug -Message "The script appears to have exited in error or in a temporary state." -Threshold 2 -Prefix '>>>>'
-            if($global:CliMonEmailFailure -eq $True) {
-                Write-Host "~~~~ The email notification failed to dispatch. Please check your settings."
-                Write-Host "~~~~ SMTP Error Description: $($global:CliMonEmailErrorText)"
-            }
-            # If ephemeral is NOT engaged, and NoRevert is True, do NOT remove the reports.
-            if($Ephemeral -eq $False -And $global:CliMonConfig.NoRevert -eq $True) { return }
-            # An error was trapped in some way. Remove any reports generated in this session.
-            Write-Debug -Message "Removing reports generated in this session." -Threshold 2 -Prefix '>>>>'
-            $global:CliMonGeneratedReports | ForEach-Object {
-                Write-Debug -Message "Report: $_" -Threshold 3 -Prefix '>>>>>>'
-            }
-            foreach($report in $global:CliMonGeneratedReports) {
-                # Check for the file's existence, then try to delete it.
-                if(Test-Path $report) {
-                    try {
-                        Remove-Item -Path $report -Force
-                        Write-Debug -Message "Report '$report' removed." -Threshold 3 -Prefix '>>>>>>'
-                    } catch { }
-                }
-            }
-        } else {
-            Write-Debug -Message "The script appears to have exited normally." -Threshold 2 -Prefix '>>>>'
-            # If the MaxReportRetentionHours setting is set to zero (or less), reports don't get cleaned.
-            if($global:CliMonConfig.MaxReportRetentionHours -gt 0) {
-                # Delete reports in the ReportsDirectory that exceed the age threshold.
-                Write-Host "-- Removing reports that have aged beyond $($global:CliMonConfig.MaxReportRetentionHours) hours."
-                # Get the current time that matches the filename format for reports.
-                $local:todaysDate = ((Get-Date -UFormat %Y-%m-%d-%H_%M).ToString())
-                # Get the list of Report-*.txt files in the Reports Directory
-                $local:reportFiles = (Get-ChildItem -Path `
-                    "$($global:CliMonConfig.ReportsDirectory)").Name -ILike 'Report-*.txt'
-                # Go through each report file, extract the date from the name, and test it for expiration.
+        }
+    } else {
+        Write-Debug -Message "The script appears to have exited normally." -Threshold 2 -Prefix '>>>>'
+        # If the MaxReportRetentionHours setting is set to zero (or less), reports don't get cleaned.
+        if($global:CliMonConfig.MaxReportRetentionHours -gt 0) {
+            # Delete reports in the ReportsDirectory that exceed the age threshold.
+            Write-Host "-- Removing reports that have aged beyond $($global:CliMonConfig.MaxReportRetentionHours) hours."
+            # Get the current time that matches the filename format for reports.
+            $local:todaysDate = ((Get-Date -UFormat %Y-%m-%d-%H_%M).ToString())
+            # Get the list of Report-*.txt files in the Reports Directory
+            $local:reportFiles = (Get-ChildItem -Path `
+                "$($global:CliMonConfig.ReportsDirectory)").Name -ILike 'Report-*.txt'
+            # Go through each report file, extract the date from the name, and test it for expiration.
+            try {
                 foreach($report in $local:reportFiles) {
                     Write-Debug -Message "Examining report: $report" -Threshold 3 -Prefix '>>>>'
                     $report -Match '-(\d{4}-\d{2}-\d{2}-\d{2}_\d{2}).txt$' | Out-Null
@@ -331,20 +331,22 @@ Function Invoke-CliMonCleanup() {
                         Write-Host "---- Removed aged report: $report"
                     }
                 }
-            }
-            # If application auto-tracking is enabled, set the content of the report to the newly-tracked
-            #  InstalledApps that had a version change.
-            if($global:CliMonConfig.Notifications.InstallationChanges.Enabled -eq $True) {
-                # If there were changes to the automatic tracking file, record them.
-                if($global:CliMonAutoTrackingIndexChanged -eq $True) {
-                    Write-Host "-- Saving updated installed application trackers."
-                    ($global:CliMonUpdatedApplicationTrackingFilters | ConvertTo-Json) `
-                        | Set-Content -Force -Path `
-                        $global:CliMonConfig.Notifications.InstallationChanges.ReportLocation
-                }
+            } catch {
+                Write-Error "Unable to remove a portion of (or any) aged reports: $_"
             }
         }
-    } catch { }
+        # If application auto-tracking is enabled, set the content of the report to the newly-tracked
+        #  InstalledApps that had a version change.
+        if($global:CliMonConfig.Notifications.InstallationChanges.Enabled -eq $True) {
+            # If there were changes to the automatic tracking file, record them.
+            if($global:CliMonAutoTrackingIndexChanged -eq $True) {
+                Write-Host "-- Saving updated installed application trackers."
+                ($global:CliMonUpdatedApplicationTrackingFilters | ConvertTo-Json) `
+                    | Set-Content -Force -Path `
+                    $global:CliMonConfig.Notifications.InstallationChanges.ReportLocation
+            }
+        }
+    }
     # Regardless of either outcome, clean up ANY custom variables as needed.
     Remove-Variable -Name * -Force -ErrorAction SilentlyContinue
     $Error.Clear()
