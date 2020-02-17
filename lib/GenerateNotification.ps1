@@ -106,10 +106,12 @@ Function Write-CliMonNotification() {
             if($client.Profile.IsOnline -eq $False -Or $client.Profile.IsInvokable -eq $False) {
                 # This will finalize the client section if they have gone offline.
                 Write-Host "------ Client is marked as unreachable. Moving on."
-                [void]$BodyText_Container.Append((Get-ClientNotificationSection `
-                    -NotificationBody $local:BodyText_PerClient.ToString() -TargetClient $client))
-                # Flip the background colors.
-                $global:CliMonFlipColors = -Not $global:CliMonFlipColors
+                if($global:CliMonConfig.Notifications.Triggers.ReachabilityChange -eq $True) {
+                    [void]$BodyText_Container.Append((Get-ClientNotificationSection `
+                        -NotificationBody $local:BodyText_PerClient.ToString() -TargetClient $client))
+                    # Flip the background colors.
+                    $global:CliMonFlipColors = -Not $global:CliMonFlipColors
+                }
                 continue
             }
             # Process any filename-tracker deltas that were caught, if tracking is enabled.
