@@ -379,8 +379,26 @@ $global:CliMonConfig = @{
 			#  The "[[IP]]" token is dynamically replaced with the client's IP address and "[[SUBNETS]]" with the matched subnet.
 			# NOTE: HTML formatting can also be added to this message as desired.
 			Message = ("Client IP <span style='color:steelBlue;font-weight:bold;'>[[IP]]</span> matched subnet(s)" +
-				" <span style='color:steelBlue;font-weight:bold;'>[[SUBNETS]]</span>.")
-		}
+				" <span style='color:steelBlue;font-weight:bold;'>[[SUBNETS]]</span>.");
+		};
+		
+		# Variables related to local-admin checks on each workstation.
+		LocalAdminTracking = @{
+			# Enables local admin tracking, if True.
+			Enabled = $True
+			# ^REQUIRED: A regular-expression string stating which usernames or username patterns (domain
+			#  included) are exempt from being reported as a local administrator on the client machine.
+			# NOTE: This string is EXPANDED later in the monitor code, per the ExpandExceptionString option.
+			#  If the expansion is breaking this regex, consider changing it or disabling expansion altogether.
+			#  One can test this with: $ExecutionContent.InvokeCommand.ExpandString(YOUREXCEPTIONSTRING) at a PSH terminal.
+			Exceptions = '^($($env:COMPUTERNAME)\\(corpadmin|Administrator)|EXAMPLE_DOMAIN\\(Administrator|CORPADMIN_[A-Z]+|CoolAdmins))$'
+			# See above. Expand variable names in the Exceptions at run-time.
+			ExpandExceptionString = $True;
+			# The below table is (can be) a mapping of client hostnames -> regexes for exceptions on a per-client basis.
+			#  This is useful when, for example, you have a local workstation that requires unusual local admin accounts.
+			#  The keys of the table are the hostnames WITH the domain name appended, as applicable (case-insensitive).
+			PerClientExceptions = @{
+				"WKSTN111.EXAMPLE.LOCAL" = "^EXAMPLE_DOMAIN\\(LOCAL_ADMIN_GUY)"
 				"WKSTN222.EXAMPLE.LOCAL" = "^EXAMPLE_DOMAIN\\(TRUSTED_PERSON)"
 			};
 			# The text to display in the notification about each found account.

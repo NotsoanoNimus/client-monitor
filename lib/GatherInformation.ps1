@@ -493,6 +493,7 @@ Function Get-AllClientProfiles() {
             StartupApps = @{}; StartupAppsIndex = @();
             Services = @{}; ServicesIndex = @();
             ScheduledTasks = @{}; ScheduledTasksIndex = @();
+			LocalAdmins = @();
         }
 
         # BEGIN INFORMATION COLLECTION:
@@ -735,6 +736,26 @@ Function Get-AllClientProfiles() {
             $Profile.ScheduledTasks = $scheduledTasks
             $Profile.ScheduledTasksIndex = $scheduledTasksIndex
         }
+
+		# -----------------------------------------
+		# Get disallowed local admin profiles.
+		if($global:CliMonConfig.Notifications.LocalAdminTracking.Enabled -eq $True) {
+			# Expand any variable names in the config string for local-admin exceptions, if enabled.
+			$local:exc = 
+				if($global:CliMonConfig.Notifications.LocalAdminTracking.ExpandExceptionString -eq $True) {
+					$ExecutionContext.InvokeCommand.ExpandString($global:CliMonConfig.Notifications.LocalAdminTracking.Exceptions)
+				} else {
+					$global:CliMonConfig.Notifications.LocalAdminTracking.Exceptions
+				}
+			if(-Not($null -eq $local:exc -Or $local:exc -eq "")) {
+				$local:admins = @()
+				try {
+					$local:admins = (Get-LocalGroupMember -Group "Administrators" `
+						| Where-Object { $_.Name -inotmatch $local:exc }).Name
+				} catch { $local:admins = @(); } #Write-Error "Failed to get local admins: $_" }
+				$Profile.LocalAdmins = @($local:admins)
+			}
+		}
 
         # Return the completed profile.
         return [Hashtable]$Profile

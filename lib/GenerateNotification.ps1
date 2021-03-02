@@ -94,24 +94,35 @@ Function Write-CliMonNotification() {
                 [void]$local:BodyText_PerClient.Append(
                     (Get-ReachabilityChange -TargetClient $client))
             }
+			# Get information about any local admins that were found in the client profile.
+			if($global:CliMonConfig.Notifications.LocalAdminTracking.Enabled -eq $True -And 
+			  $client.Profile.LocalAdmins.Count -gt 0) {
+				Write-Host "------ Client has disallowed local admins: ||$($client.Profile.LocalAdmins | ConvertTo-Json)||"
+				#Write-Host "-------- $($client.Profile.LocalAdmins.Count)"
+				[void]$local:BodyText_PerClient.Append(
+					(Get-LocalAdminAlertSection -MatchedAccounts $client.Profile.LocalAdmins)
+				)
+			}
             # Get information about the client IP address; see if it resides in an 'alert' subnet, if enabled.
             if($global:CliMonConfig.Notifications.IpAddressAlerts.Enabled -eq $True -And
               $null -ne $local:clientDeltas.MatchedSubnets) {
                 Write-Host "------ Client is part of one or more alert subnets."
-                [void]$local:BodyText_PerClient.Append(
-                    (Get-IpAddressAlertSection -TargetClient $client `
-                        -MatchedSubnets $local:clientDeltas.MatchedSubnets))
+				# Only add the alert if it's during the daily window.
+				$dateDiff = ((Get-Date) - (Get-Date -Date $global:CliMonConfig.Notifications.IpAddressAlerts.DailyTimeStart)).TotalMinutes
+				if($dateDiff -ge 0 -And $dateDiff -le $global:CliMonConfig.Notifications.IpAddressAlerts.DailyTimeRange) {
+					[void]$local:BodyText_PerClient.Append(
+						(Get-IpAddressAlertSection -TargetClient $client `
+							-MatchedSubnets $local:clientDeltas.MatchedSubnets))
+				}
             }
             # Stop processing the client here if they are currently noted as unreachable.
             if($client.Profile.IsOnline -eq $False -Or $client.Profile.IsInvokable -eq $False) {
                 # This will finalize the client section if they have gone offline.
                 Write-Host "------ Client is marked as unreachable. Moving on."
-                if($global:CliMonConfig.Notifications.Triggers.ReachabilityChange -eq $True) {
-                    [void]$BodyText_Container.Append((Get-ClientNotificationSection `
-                        -NotificationBody $local:BodyText_PerClient.ToString() -TargetClient $client))
-                    # Flip the background colors.
-                    $global:CliMonFlipColors = -Not $global:CliMonFlipColors
-                }
+                [void]$BodyText_Container.Append((Get-ClientNotificationSection `
+                    -NotificationBody $local:BodyText_PerClient.ToString() -TargetClient $client))
+                # Flip the background colors.
+                $global:CliMonFlipColors = -Not $global:CliMonFlipColors
                 continue
             }
             # Process any filename-tracker deltas that were caught, if tracking is enabled.
@@ -629,6 +640,31 @@ Function Get-IpAddressAlertSection() {
     [void]$local:returnData.Append("`n</div>")
     # Return the final data.
     return $local:returnData.ToString()
+}
+
+
+
+# Return any information about the client's local administrator accounts, if they're found.
+#  This is basically a copy of the above function since it works the same way.
+#  These might eventually be merged together.
+Function Get-LocalAdminAlertSection() {
+	param([Array]$MatchedAccounts)
+	# For some reason, kept getting back null arrays in this. Add this layer of protection.
+	$local:hasContent = $False
+	foreach($acct in $MatchedAccounts) { if(-Not($null -eq $acct -Or $acct -eq "")) { $local:hasContent = $True; break; } }
+	if($local:hasContent -eq $False) { return ""; }
+	# Define the base stringbuilder object for this section.
+	$local:returnData = [System.Text.StringBuilder]::new()
+	[void]$local:returnData.Append("<div class='DiffsSection'>")
+	# Get a clean list of all matching account names.
+	foreach($acct in $MatchedAccounts) {
+	if($null -eq $acct -Or $acct -eq "") { continue; }
+		$local:notifMsg = $global:CliMonConfig.Notifications.LocalAdminTracking.Message -Replace '\[\[ACCTNAME\]\]',"$acct"
+		[void]$local:returnData.Append("$($local:notifMsg)<br />`n")
+	}
+	# Close the section out and return the final data.
+	[void]$local:returnData.Append("`n</div>")
+	return $local:returnData.ToString()
 }
 
 

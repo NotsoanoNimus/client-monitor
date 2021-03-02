@@ -80,6 +80,7 @@ Function Compare-EnvironmentDeltas() {
             NewStartupApps = @{}; RemovedStartupApps = @{}; ChangedStartupApps = @{}
             NewScheduledTasks = @{}; RemovedScheduledTasks = @{}; ChangedScheduledTasks = @{}
             FilenameViolations = @{}; MatchedSubnets = $null;
+			LocalAdmins = @();
         }
         # Collect the top of the list for most recent files/reports matching the given hostname.
         #  Any $null return from this function indicates failure to retrieve the report.
@@ -111,6 +112,40 @@ Function Compare-EnvironmentDeltas() {
             $deltasObject.MatchedSubnets =
                 Get-IpAddressAlertSubnets -TargetClient $client
         }
+		# If enabled, check for any disallowed local administrators on the client.
+		$local:badAccts = $False
+		if($global:CliMonConfig.Notifications.LocalAdminTracking.Enabled -eq $True -And `
+		  $null -ne $client.Profile.LocalAdmins) {
+			# Test each account name against possible config-based exceptions, and trigger if one's found.
+			[System.Collections.ArrayList]$local:keptAccts = $client.Profile.LocalAdmins.Clone()
+			if($null -ne $global:CliMonConfig.Notifications.LocalAdminTracking.PerClientExceptions[$client.Hostname]) {
+				$local:t = $global:CliMonConfig.Notifications.LocalAdminTracking.PerClientExceptions[$client.Hostname]
+				#[System.Collections.ArrayList]$local:keptAccts = $client.Profile.LocalAdmins.Clone()
+				foreach($account in $client.Profile.LocalAdmins) {
+					if($null -eq $account -Or $account -eq "") { $local:keptAccts.Remove($account); }
+					elseif($account -inotmatch $local:t) {
+						# There a non-excepted account, trigger the alarm for the client and DON'T remove the item.
+						$local:badAccts = $True
+					} else {
+						# Anything with a per-client exception needs to be removed from the array.
+						$local:keptAccts.Remove($account)
+					}
+				}
+			} else {
+				# Still clean null entries.
+				foreach($account in $client.Profile.LocalAdmins) {
+					if($null -eq $account -Or $account -eq "") { $local:keptAccts.Remove($account); }
+				}
+				# All accounts are considered bad if there are no exceptions for this client (and some remain after the null-check).
+				if($local:keptAccts.Count -gt 0) { $local:badAccts = $True; }
+			}
+			# Assign the resulting array back to the profile.
+			$local:deltasObject.LocalAdmins = $local:keptAccts.ToArray()
+			if($local:deltasObject.LocalAdmins.Count -gt 0) {
+				Write-Host "----" -NoNewline
+				Write-Host " Detected disallowed local administrators on this client." -ForegroundColor Magenta
+			}
+		}
         # Set up a "sensor" variable to detect if the sub-keys within each Key in the deltas tables
         #  are different in quantity across any of the property types. If a difference is detected
         #  in the number of sub-keys for any one of the properties, the client had some kind of
@@ -119,11 +154,12 @@ Function Compare-EnvironmentDeltas() {
             $global:CliMonEmptyDeltas[$_].Count -eq $deltasObject[$_].Count
         }
         # If the boolean array contains a False (meaning non-equivalence) or if the client had some
-        #  kind of reachability change, then add the client's changes to the CliMonDeltas tracker.
+        #  kind of important change, then add the client's changes to the CliMonDeltas tracker.
         if(
             $local:detectDeltas.Contains($False) -Or
             $deltasObject.OnlineStatusChange -eq $True -Or
-            $deltasObject.InvokableStatusChange -eq $True
+            $deltasObject.InvokableStatusChange -eq $True -Or
+			$local:badAccts -eq $True
         ) {
             # Add the deltasObject to the global tracking hashtable, indexed by client hostname.
             Write-Host "---- Changes or alerts were detected for this client. Tracking." -ForegroundColor Yellow
@@ -236,24 +272,30 @@ Function Compare-ClientDeltas() {
                 # ... check that the versions are different. This is required to mark a change.
                 if($currentObject."DisplayVersion" -ne $priorObject."DisplayVersion") {
                     Write-Debug -Message "Version change in InstalledApp detected." -Threshold 4 -Prefix '>>>>>>>>>>'
-                    # Get the current properties for the application with the given display name.
-                    $local:installedAppFilterProperties =
-                        $global:CliMonUpdatedApplicationTrackingFilters."$($currentObject.DisplayName)"
-                    # Check to ensure that the display version isn't already tracked/marked.
-                    if($local:installedAppFilterProperties -INotContains `
-                      "$($currentObject.DisplayVersion)") {
-                        Write-Debug -Message ("{App $($currentObject.DisplayName), Version " +
-                            "'$($currentObject.DisplayVersion)'} added to the tracker.") `
-                            -Threshold 4 -Prefix '>>>>>>>>>>'
-                        # Add the display version to the tracker for this application.
-                        $local:installedAppFilterProperties += @($currentObject.DisplayVersion)
-                        # Splice the application back onto the object.
-                        $global:CliMonUpdatedApplicationTrackingFilters `
-                            | Add-Member -Name "$($currentObject.DisplayName)" `
-                            -Value $local:installedAppFilterProperties -Type NoteProperty -Force
-                        # Set the flag to True that some changes were added.
-                        $global:CliMonAutoTrackingIndexChanged = $True
-                    }
+					Write-Debug -Message "CURRENT INFORMATION:`n$($currentObject | Format-List | Out-String)" -Threshold 4 -Prefix '>>>>>>>>>>>>'
+					Write-Debug -Message "PRIOR INFORMATION:`n$($currentObject | Format-List | Out-String)" -Threshold 4 -Prefix '>>>>>>>>>>>>'
+					if([String]::IsNullOrEmpty($currentObject.DisplayName) -ne $True -And
+					  [String]::IsNullOrEmpty($currentObject.DisplayVersion) -ne $True) {
+						# Get the current properties for the application with the given display name.
+						$local:installedAppFilterProperties =
+							$global:CliMonUpdatedApplicationTrackingFilters."$($currentObject.DisplayName)"
+						# Check to ensure that the display version isn't already tracked/marked.
+						if($local:installedAppFilterProperties -INotContains "$($currentObject.DisplayVersion)") {
+							Write-Debug -Message ("{App '$($currentObject.DisplayName)', Version " +
+								"'$($currentObject.DisplayVersion)'} added to the tracker.") `
+								-Threshold 4 -Prefix '>>>>>>>>>>'
+							# Add the display version to the tracker for this application.
+							$local:installedAppFilterProperties += @($currentObject.DisplayVersion)
+							# Splice the application back onto the object.
+							$global:CliMonUpdatedApplicationTrackingFilters `
+								| Add-Member -Name "$($currentObject.DisplayName)" `
+								-Value $local:installedAppFilterProperties -Type NoteProperty -Force
+							# Set the flag to True that some changes were added.
+							$global:CliMonAutoTrackingIndexChanged = $True
+						}
+                    } else {
+						Write-Debug -Message "SKIPPING. The name or version field is EMPTY!" -Threshold 3 -Prefix '>>>>>>>>>>'
+					}
                 }
             }
             # For each property to compare, add the _prior label with the value of the Prior object.
