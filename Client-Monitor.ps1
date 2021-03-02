@@ -53,6 +53,9 @@ from the last set of reports, without actually updating anything.
 Optional. Defaults to ".\Client-MonitorConfig.ps1", but can be the full path of a Client Monitor configuration file.
 .PARAMETER SmtpCredential
 Optional. Manually override any PSCredential object defined in the configuration for SMTP relays.
+.PARAMETER DevMode
+Optional. If supplied as a switch, Client Monitor will override the configured SMTP settings with those
+defined in the DevProfile subsection of the Client Monitor configuration file.
 .LINK
 https://github.com/NotsoanoNimus/client-monitor
 
@@ -63,7 +66,7 @@ https://github.com/NotsoanoNimus/client-monitor
 
 
 ######################################################################################
-# Copyright (C) 2019 "Notsoano Nimus", as a free software project
+# Copyright (C) 2021 @NotsoanoNimus on GitHub, as a free software project
 #  licensed under GNU GPLv3.
 #
 # Original Repository: https://github.com/NotsoanoNimus/client-monitor
@@ -98,7 +101,8 @@ param(
     [Switch]$FlatReportCsv = $False,
     [Switch]$Ephemeral = $False,
     [String]$ConfigFile = "$(Split-Path $PSCommandPath)\Client-MonitorConfig.ps1",
-    [PSCredential]$SmtpCredential = $null
+    [PSCredential]$SmtpCredential = $null,
+    [Swtich]$DevMode = $False
 )
 # Immediately clear all errors.
 $Error.Clear()
@@ -117,6 +121,9 @@ if(-Not(Test-Path "$($ConfigFile)")) {
 ##################################################
 #                    SOURCING                    #
 ##################################################
+# Set up whether or not the dev profile will be used. See Client-MonitorConfig.ps1 for more.
+$global:DevProfileEnabled = $DevMode
+
 # Import all relevant Client-Monitor objects, methods, and global definitions.
 # Start by getting the directory that the script is currently executing from (to ease imports).
 $CliMonScriptDirectory = Split-Path $PSCommandPath

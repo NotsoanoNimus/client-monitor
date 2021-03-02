@@ -1,5 +1,5 @@
 ######################################################################################
-# Copyright (C) 2019 "Notsoano Nimus", as a free software project
+# Copyright (C) 2021 @NotsoanoNimus on GitHub, as a free software project
 #  licensed under GNU GPLv3.
 #
 # Original Repository: https://github.com/NotsoanoNimus/client-monitor
@@ -26,7 +26,19 @@
 #        potentially confusing or destructive results.
 $global:CliMonConfig = @{
 	# A "safety" variable to ensure the configuration was imported successfully.
-	ConfigImported = $True
+	ConfigImported = $True;
+	
+	# "Dev mode" settings which will override a few of the set config variables, if enabled.
+	#  Allows "switching" CliMon profiles easily for testing.
+	# Dev mode is enabled via the $global:DevProfileEnabled variable's value, set on script init.
+	DevProfile = @{
+		# To whom will emails be sent?
+		Recipient = [System.Net.Mail.MailAddress]::new('developer@examplesite.co');
+		# From who?
+		Source = [System.Net.Mail.MailAddress]::new('CliMon Dev <climon-dev@examplesite.co>');
+		# What should the email's Subject field be prefixed with to indicate DEV testing?
+		SubjectTag = "[DEV] ";
+	};
 
 	# When a script-terminating (i.e. Fatal) error is encountered, or if the notification fails
 	#  to email properly, the Client Monitor script will forcibly roll back any generated client
@@ -35,17 +47,18 @@ $global:CliMonConfig = @{
 	#  deleted. This does NOT affect runs of Ephemeral Mode.
 	# NOTE: It is highly recommended to leave this value False, or critical environment updates
 	#        could be missed from a botched run or failed notification.
-	NoRevert = $False
+	NoRevert = $False;
 
 	# The prefix or domain name used in the AD environment under which the script will run.
 	#  If this is not defined, The $env:COMPUTERNAME variable will be used instead.
-	DomainName = "TSP"
+	DomainName = "EXAMPLE";
 	# The internal domain suffix of the given/extracted hostnames. If this is left blank, then the
-	#  self-referential '.localdomain' suffix name will be populated later. If you are using
-	#  Active Directory, PLEASE SET THIS VALUE APPROPRIATELY!
+	#  self-referential "COMPUTERNAME" environment variable will be populated later. If you are
+	#  using Active Directory, PLEASE SET THIS VALUE APPROPRIATELY!
 	# Luckily, ping tests and connection tests are done directly by IP address instead of hostname.
-	DomainSuffix = '.thestraightpath.local'
-
+	DomainSuffix = '.example.local';
+	DomainSuffixRegex = "";   #set in the script initialization.
+		
 	# MSAD username filter: which clients to collect when running the Get-ADComputer command
 	#  (if not supplying a list via the ClientsList parameter).
 	# For example:
@@ -60,33 +73,33 @@ $global:CliMonConfig = @{
 	#   B: Ending with '.local' and starting with 'reception-'
 	#
 	# As a final note, this property can be MANUALLY OVERRIDDEN with a command-line parameter.
-	DomainUserFilter = "(Name -Like 'wkstn*')"
+	DomainUserFilter = "(Name -Like 'wkstn*')";
 
 	# The folder/location in which to store any generated information for comparison and review.
-	ReportsDirectory = "C:\temp\Client-Monitor\Reports"
+	ReportsDirectory = "C:\temp\Client-Monitor\Reports";
 
 	# The base directory where all LOCAL user profile folders are stored.
 	#   Typically "C:\Users\" in most environments.
 	# NOTE: This is a FALLBACK option. The NT registry key for the UserProfile base is actually
 	#       checked first before attempting to use the contents of this option.
-	UserProfileBase = "C:\Users\"
+	UserProfileBase = "C:\Users\";
 	# The base folder within a user profile where the NTUSER.DAT file is stored in your environment.
 	#  If you're unsure about this, it is best left untouched (as that's most often where it is).
-	NTUSERLocation = "\\"
+	NTUSERLocation = "\\";
 	# A NON-UNC (i.e. CMD-supported) path where NTUSER.DAT files are temporarily duplicated for
 	#  mounting to the registry on the end-user's machine. Shadowed files are used instead of
 	#  direct access to prevent ruining anything in the user's hive, and to prevent locking.
 	# NOTE: This folder is created on the remote machine as an Admin-only folder.
-	NTUSERShadowLocation = "C:\temp\Client-Monitor"
+	NTUSERShadowLocation = "C:\temp\Client-Monitor";
 
 	# How many hours to keep reports in the Reports Directory before they're considered expired.
 	#  Reports will be deleted from the directory after the script completes a run, if and only if
 	#  there were no critical failures during the run of the script.
 	# Set this to 0 (or less) to disable the report retention policy.
-	MaxReportRetentionHours = 72
+	MaxReportRetentionHours = 72;
 
 	# How verbose to be with debugging output. The higher, the more descriptive; 0 = no debug, 4 = full verbosity.
-	Verbosity = $Debug  # Currently being set to the passed parameter but can be static as well.
+	Verbosity = $Debug;  # Currently being set to the passed parameter but can be static as well.
 
 	# Section for realname translation. This allows the script to fetch the "real name" of the target
 	#  based on the method used to retrieve it, and will insert that into the notification instead of
@@ -97,14 +110,14 @@ $global:CliMonConfig = @{
 		# Enables the translation, if True. Note that if a client does not have a real name defined or
 		#  the script cannot find the real name based on the options, the value of the IndexedBy field
 		#  will be used instead for the client's name in the notification.
-		Enabled = $True
+		Enabled = $True;
 		# The string to attach to the Base URL or the use as the index/key into the DirectObject. This
 		#  can be either "IpAddress" or "Hostname", and NOTHING ELSE (or else the translation will fail).
-		IndexedBy = "Hostname"
+		IndexedBy = "Hostname";
 		# The below options set the method for translating hostnames. There are currently two options:
 		#  - DirectObject: Use a Hashtable object to translate hostnames directly to real names.
 		#  - HTTPRequest: Use an HTTP request to return a real name string for the given hostname or IP.
-		Method = "HTTPRequest"
+		Method = "HTTPRequest";
 		HTTPRequest = @{
 			# The format-ready URL to insert the "index" value into. '{0}' represents a placeholder for
 			#  where the IP address or hostname will be entered, based on the IndexedBy value above.
@@ -116,8 +129,8 @@ $global:CliMonConfig = @{
 			#   @{"hostname1"="this name"; "hostname2"="another name"; ...} -- For IndexedBy = "Hostname"
 			#   @{"ip1"="this name"; "ip2"="that name"} -- For IndexedBy = "IpAddress"
 			Table = @{};
-		}
-	}
+		};
+	};
 
 	# These settings are contingent on the DeltasReport parameter being given to the script call.
 	DeltasReport = @{
@@ -125,10 +138,10 @@ $global:CliMonConfig = @{
 		#  the report will also attempt to attach the deltas report to the email message. If set to False,
 		#  the Deltas Report will only be generated "normally" and will be placed into the Reports
 		#  Directory. Off by default.
-		AsAttachment = $False
+		AsAttachment = $False;
 		# Additionally, set whether or not the Deltas Report should be compressed (i.e. minified).
-		Compressed = $False
-	}
+		Compressed = $False;
+	};
 
 	# These settings are contingent on the FlatReportCsv being included with the script call.
 	FlatReportCsv = @{
@@ -166,12 +179,12 @@ $global:CliMonConfig = @{
 	# NOTE: Do not include "special" fields used in the script below. Off-limits fields include:
 	#  STOREAPPS : PackageUserInformation
 	TrackedValues = @{
-		InstalledApps = @("DisplayName", "DisplayVersion", "Publisher", "InstallDate", "InstallLocation")
-		Services = @("DisplayName", "ServiceName", "StartType")
-		StoreApps = @("Name", "Architecture", "InstallLocation", "Status", "PublisherId", "PackageFullName")
-		StartupApps = @("Command", "Location", "User")
-		ScheduledTasks = @("TaskName", "TaskPath", "Author", "SecurityDescriptor")
-	}
+		InstalledApps = @("DisplayName", "DisplayVersion", "Publisher", "InstallDate", "InstallLocation");
+		Services = @("DisplayName", "ServiceName", "StartType");
+		StoreApps = @("Name", "Architecture", "InstallLocation", "Status", "PublisherId", "PackageFullName");
+		StartupApps = @("Command", "Location", "User");
+		ScheduledTasks = @("TaskName", "TaskPath", "Author");
+	};
 	
 	# Settings specific to filename tracking.
 	FilenameTracking = @{
@@ -211,7 +224,7 @@ $global:CliMonConfig = @{
 			'\.te?xt$' = 5;
 			'\.html?$' = 1;
 		};
-	}
+	};
 
 	# Notifications-specific settings.
 	Notifications = @{
@@ -225,7 +238,7 @@ $global:CliMonConfig = @{
 			StoreAppsChange = $True;
 			StartupAppsChange = $True;
 			ScheduledTasksChange = $True;
-		}
+		};
 
 		# Settings for automatic tracking of InstalledApps version changes.
 		InstallationChanges = @{
@@ -252,30 +265,30 @@ $global:CliMonConfig = @{
 		#		the change.
 		FilterPatterns = @{
 			InstalledApps = @{
-				New = @()
-				Removed = @()
-				Changed = @()
-			}
+				New = @();
+				Removed = @();
+				Changed = @();
+			};
 			Services = @{
-				New = @()
-				Removed = @()
-				Changed = @()
-			}
+				New = @();
+				Removed = @();
+				Changed = @();
+			};
 			StoreApps = @{
-				New = @()
-				Removed = @()
-				Changed = @()
-			}
+				New = @();
+				Removed = @();
+				Changed = @();
+			};
 			StartupApps = @{
-				New = @()
-				Removed = @()
-				Changed = @()
-			}
+				New = @();
+				Removed = @();
+				Changed = @();
+			};
 			ScheduledTasks = @{
-				New = @()
-				Removed = @()
-				Changed = @()
-			}
+				New = @();
+				Removed = @();
+				Changed = @();
+			};
 		};
 		FilterOptions = @{
 			# Is the filter a blacklist? If so, anything added to the object in the target 
@@ -295,31 +308,31 @@ $global:CliMonConfig = @{
 		};
 
 		# Where to deliver notifications (which email address).
-		Recipient = [System.Net.Mail.MailAddress]::new('Notsoano Nimus <postmaster@thestraightpath.email>')
+		Recipient = [System.Net.Mail.MailAddress]::new('Notsoano Nimus <postmaster@examplesite.co>');
 		# The address used as a 'source' on email notifications.
-		Source = [System.Net.Mail.MailAddress]::new('Env Monitor <monitor@thestraightpath.email>')
+		Source = [System.Net.Mail.MailAddress]::new('ENV Monitor <desktop-monitor@examplesite.co>');
 		# Email notification subject line.
-		Subject = 'Summary of User Environment Changes'
+		Subject = 'Summary of User Environment Changes';
 
 		# Alternate body text to use when sending the notification as an attachment instead of inline.
 		#  NOTE: This property doesn't reference any other classes or variables by default. If it does,
 		#         get changed to do so, the declaration needs to be moved to the bottom of this file.
 		AlternateBodyText = "<b>Client Monitor</b> results are attached to this email.<br /><br /><hr />";
 		# Is the alternate body text above HTML or plain-text?
-		AlternateBodyTextIsHtml = $True
+		AlternateBodyTextIsHtml = $True;
 
 		# SMTP-related settings.
 		Smtp = @{
 			# Enable/Disable SSL in the SMTP transaction for dispatching notifications. Turned off by default.
-			UseSsl = $False
+			UseSsl = $False;
 			# If the SMTP credential is set to a valid PSCredential object, the script will try to relay using the
 			#  given credentials through the target server. Set to $null to use an anonymous relay.
-			Credential = $null
+			Credential = $null;
 				#(New-Object PSCredential ('monitor@bigcorp.net', `
 				#(ConvertTo-SecureString 'SuperSecretPassword' -AsPlainText -Force)))
 			# Which mail server to dispatch the notification to/through, and the target relay port.
-			Server = 'relay.for.outbound.clientmonitor.mail.net'
-			ServerPort = 25
+			Server = 'relay.for.outbound.clientmonitor.mail.net';
+			ServerPort = 25;
 		}
 
 		# Settings for script crash/failure notification emails.
@@ -328,16 +341,16 @@ $global:CliMonConfig = @{
 			# Whether or not to even send crash/failure reports.
 			Enabled = $True;
 			# Destination email address. This will be a plain string.
-			Recipient = 'postmaster@thestraightpath.email';
+			Recipient = 'postmaster@examplesite.co';
 			# Email subject for the crash notification.
-			Subject = '[FATAL] Client Monitor Crash Notification'
+			Subject = '[FATAL] Client Monitor Crash Notification';
 			# Body text to include in the message. "[[ERRORTEXT]]" is substituted dynamically for the error text.
 			Body = 
 				("A fatal error was encountered while running the Client Monitor script. The <strong>top-most</strong>" +
 				 " error is the offending line which caused the script to halt, in the event more than one is present." +
-				 "<br /><p style='color:red;'>[[ERRORTEXT]]</p>")
-		}
-
+				 "<br /><p style='color:red;'>[[ERRORTEXT]]</p>");
+		};
+		
 		# Controls settings that track whether a client's IP address is located within one of the defined
 		#  network subnets (IPv4 or IPv6) that are added to the below array. "Alert" simply means that the
 		#  header of the client's "changes" section will be modified in the notification to include the
@@ -346,6 +359,10 @@ $global:CliMonConfig = @{
 		IpAddressAlerts = @{
 			# Whether or not to enable the alert.
 			Enabled = $True;
+			# Time of day for the window in which IP alerts can be included in notifications.
+			DailyTimeStart = "11:56";
+			# Allow 100 mins (until approx. 09:36) for a notification in that time to include IP alerts.
+			DailyTimeRange = 100;
 			# Defined IPv4 and IPv6 subnets that fall within the organization's DHCP ranges. This can also be used to
 			#  define subnets that need attention in each notification.
 			# ALL subnets must be defined in CIDR notation. See here for help: https://whatismyipaddress.com/cidr
@@ -357,24 +374,31 @@ $global:CliMonConfig = @{
 			#  These should NOT be in CIDR notation, as they are single exceptions.
 			IpAddressExclusions = @(
 				"192.168.1.202", "172.22.223.27"
-			)
+			);
 			# The text to display with the client header. Keep this concise and meaningful.
 			#  The "[[IP]]" token is dynamically replaced with the client's IP address and "[[SUBNETS]]" with the matched subnet.
 			# NOTE: HTML formatting can also be added to this message as desired.
 			Message = ("Client IP <span style='color:steelBlue;font-weight:bold;'>[[IP]]</span> matched subnet(s)" +
 				" <span style='color:steelBlue;font-weight:bold;'>[[SUBNETS]]</span>.")
 		}
+				"WKSTN222.EXAMPLE.LOCAL" = "^EXAMPLE_DOMAIN\\(TRUSTED_PERSON)"
+			};
+			# The text to display in the notification about each found account.
+			#  The "[[ACCTNAME]]" token is dynamically replaced with the found local admin account name.
+			# NOTE: This can also be HTML-formatted.
+			Message = ("<em>Discovered local administrator: <span style='font-weight:bold;color:#954ac4;'>[[ACCTNAME]]</span></em>");
+		};
 		
 		# Generate a notification even when there aren't any changes? Disabled by default.
 		#  This is more useful for just knowing when the script is running and monitoring if it's actually doing its job.
-		NotifyOnNoChange = $False
+		NotifyOnNoChange = $False;
 		
 		# By default, all notifications are sent as a multipart/alternative format, where email clients
 		#  can choose to render the email as plaintext or HTML. Setting HTMLEnabled to False indicates
 		#  that the user of this script doesn't even want the option available to send as HTML, and
 		#  thereby forces the server to send a single Content-Type: text/plain message instead of a
 		#  multipart message.
-		HTMLEnabled = $True
+		HTMLEnabled = $True;
 		# The two colors to alternate between when switching clients in the HTML notification.
 		### The TRUE boolean value is always used first.
 		HTMLBackgroundColors = @{
@@ -390,8 +414,17 @@ $global:CliMonConfig = @{
 		HTMLChangedValClass = 'ChangedText';
 		HTMLSnapshotValClass = 'SnapshotText';
 		# Strip out redundant table headers for items that fall under the same client > category.
-		HTMLStripTableHeaders = $True
+		HTMLStripTableHeaders = $True;
 	};
+};
+
+
+# Dev profile overwrites, if the profile's turned on...
+if($global:DevProfileEnabled -eq $True) {
+	$global:CliMonConfig.Notifications.Recipient = $global:CliMonConfig.DevProfile.Recipient
+	$global:CliMonConfig.Notifications.Source = $global:CliMonConfig.DevProfile.Source
+	$global:CliMonConfig.Notifications.Subject =
+		$global:CliMonConfig.DevProfile.SubjectTag + $global:CliMonConfig.Notifications.Subject
 }
 
 
@@ -399,10 +432,11 @@ $global:CliMonConfig = @{
 #  to reference other CliMonConfig variables). These lines must come secondarily due to intermittent
 #  race conditions resulting from cross-referencing of a config variable before its definition.
 
+
 # The full path of the file to read/write for Recent Installations tracking.
 #  By default, this is placed in the Reports Directory with a static filename.
 $global:CliMonConfig.Notifications.InstallationChanges.ReportLocation =
-	"$($global:CliMonConfig.ReportsDirectory)\recentInstallationTracking.log"
+	"$($global:CliMonConfig.ReportsDirectory)\recentInstallationTracking.log";
 
 # HTML templating for the BODY field of notification emails.
 #  [[BODYTEXT]] is replaced dynamically with the generated notification.
@@ -444,7 +478,7 @@ $global:CliMonConfig.Notifications.HTMLWrapper = @"
 [[BODYTEXT]]
 </body>
 </html>
-"@
+"@;
 
 # The header/upper section used in notifications that will have some changes noted for clients.
 #  The actual Body text is appended to this value later, forming the [[BODYTEXT]]
