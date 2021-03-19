@@ -185,16 +185,7 @@ Function Assert-SessionState() {
         [System.Threading.Tasks.Task]::WaitAll($local:pingTask)
         if($local:pingTestResult.Status -ne "Success") {
             Write-Debug -Message "The client has gone offline." -Threshold 1 -Prefix '>>>>'
-            # The client has crashed here many times. Awaiting another capture with this try/catch block enabled.
-            try {
-				$TargetClient.Profile.IsOnline = $False
-			} catch {
-				Write-Host "~~~~~~ Problem setting client Profile property IsOnline to FALSE. ~~~~~~"
-				Write-Host "$($TargetClient | Format-List | Out-String)`n`n"
-				Write-Host "$($TargetClient.Profile | Format-List | Out-String)"
-				Write-Host "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
-				throw("$_ `n    ~~~~~~~~ Details should be logged.")
-			}
+            $TargetClient.Profile.IsOnline = $False
             $local:successfulSession = $False
         } else { $TargetClient.Profile.IsOnline = $True }
         if($TargetClient.IsLocalhost() -eq $True -And $global:CliMonIsAdmin -eq $False) {
