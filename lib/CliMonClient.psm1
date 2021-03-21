@@ -37,6 +37,7 @@ $global:ClientMonitorRegexes = @{
     'HOSTNAME_WITH_SUFFIX' = '^[a-zA-Z0-9][a-zA-Z0-9\._\-]+\.[a-z0-9\-_]{2,}$';
     'LOCALHOST_HOSTNAME' = "^(LOCALHOST([0-9]|\.localdomain)?|$([Regex]::Escape($env:COMPUTERNAME)))$";
     'IPV4_ADDRESS' = '\b((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(\.|$)){4}\b';
+    'IPV6_ADDRESS' = '^(::)?([a-f0-9]{1,4}:{1,2})*([a-f0-9]{1,4})?$'
     'SID' = '^S-\d+-\d+-\d+-';
 }
 
@@ -46,7 +47,7 @@ $global:ClientMonitorRegexes = @{
 Class CliMonClient {
     [String]$Hostname = $null   #the client's hostname (capitalized, with the DomainSuffix variable added)
     [String]$IpAddress = $null   #the client's ipv4 address
-    [String]$Ip6Address = $null   #the client's ipv6 address (if any) -- this is scaffolding for later
+    ###[String]$Ip6Address = $null   #the client's ipv6 address (if any)
     [String]$RealName = ""   #the full (or partial) name of the workstation
     [Boolean]$IsValid = $False   #is the object a 'valid' client (has all needed info)
     [Boolean]$SessionOpen = $False   #is the session currently open
@@ -83,7 +84,8 @@ Class CliMonClient {
                 ($initialParam + $global:CliMonConfig.DomainSuffix).ToUpper()
             } else { $this.GetHostname($initialParam) }
         $this.IpAddress =
-            if($initialParam -match $global:ClientMonitorRegexes['IPV4_ADDRESS']) { $initialParam }
+            if($initialParam -match $global:ClientMonitorRegexes['IPV4_ADDRESS'] -Or
+                $initialParam -imatch $global:ClientMonitorRegexes['IPV6_ADDRESS']) { $initialParam }
             else { $this.GetIpAddress($initialParam) }
         # Do a validity test and set the property.
         $this.IsValid = $this.GetValidity()
@@ -98,8 +100,9 @@ Class CliMonClient {
     [Boolean] GetValidity() {
         return (
             $this.Hostname -match $global:ClientMonitorRegexes['HOSTNAME_WITH_SUFFIX'] -And
-            $this.IpAddress -match $global:ClientMonitorRegexes['IPV4_ADDRESS']
-        )
+            ($this.IpAddress -match $global:ClientMonitorRegexes['IPV4_ADDRESS'] -Or
+             $this.Ip6Address -imatch $global:ClientMonitorRegexes['IPV6_ADDRESS'])
+        );
     }
 
     # Get an IPV4 address from a hostname.
@@ -118,10 +121,12 @@ Class CliMonClient {
             $finalIp = ""
             if($givenHostname -inotmatch $global:ClientMonitorRegexes['LOCALHOST_HOSTNAME']) {
                 $resolvedAddress | ForEach-Object {
-                    if($_ -match '^[0-9\.]+$' -And $_ -notmatch '^127\.|^22[4-9]\.|^2[3-5][0-9]\.|^169\.254\.') {
-                        # Stops at the final match of an actual IP address that isn't 
+                    if(($_ -match '^[0-9\.]+$' -Or $_ -imatch '^[23][a-f0-9]{3}\:') -And
+                      $_ -notmatch '^127\.|^22[4-9]\.|^2[3-5][0-9]\.|^169\.254\.') {
+                        # Stops at the final match of an actual IP(v4/6) address that isn't 
                         #  127.0.0.0/8, 169.254.0.0/16, or anything beyond 224.0.0.0/8, if and only if the given
                         #  hostname is not equal to the ComputerName variable or 'LOCALHOST'.
+                        # Counts valid IPv6 as anything within 2000: to 3FFF: (see global unicast addresses)
                         $finalIp = $_
                     }
                 }
@@ -140,19 +145,20 @@ Class CliMonClient {
         }
         return $resolvedAddress
     }
-    # Get a hostname from an IPv4 address, using a reverse-DNS lookup.
-    [String] GetHostname([String]$ipv4Address) {
+    # Get a hostname from an IPv4 or IPv6 address, using a reverse-DNS lookup.
+    [String] GetHostname([String]$ipAddr) {
         $resolvedHostname = $null
         try {
             # Use the system DNS library to attempt a reverse-DNS check for the IP address.
-            $resolvedHostname = [System.Net.Dns]::Resolve("$ipv4Address").HostName
+            $resolvedHostname = [System.Net.Dns]::Resolve("$ipAddr").HostName
         } catch { }
         # If the hostname was resolved, get its first occurrence (in case it's an array).
         if($resolvedHostname -Is [Array] -And $resolvedHostname.Length -gt 1) {
             $resolvedHostname = $resolvedHostname[0]
         }
         # If the hostname matches an IP Address pattern (which happens on bad lookups), discard it.
-        if($resolvedHostname -match $global:ClientMonitorRegexes['IPV4_ADDRESS']) {
+        if($resolvedHostname -match $global:ClientMonitorRegexes['IPV4_ADDRESS'] -Or
+          $resolvedHostname -imatch $global:ClientMonitorRegexes['IPV6_ADDRESS']) {
             $resolvedHostname = $null
         }
         # If there is not already a domain suffix attached (and target isn't LOCALHOST), bring it in from the config.
@@ -197,7 +203,7 @@ Class CliMonClient {
 
     # A boolean function to return whether or not the client is a localhost client.
     [Boolean] IsLocalhost() {
-        return ($this.Hostname -ILike "LOCALHOST*" -Or $this.IpAddress -Like "127.*")
+        return ($this.Hostname -ILike "LOCALHOST*" -Or $this.IpAddress -Like "127.*" -Or $this.IpAddress -Match '^::1?$')
     }
 
     # Runs a command through the client's active session (if any).
