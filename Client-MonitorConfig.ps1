@@ -1,9 +1,9 @@
 ######################################################################################
-# Copyright (C) 2021 @NotsoanoNimus on GitHub, as a free software project
+# Copyright (C) 2019 @NotsoanoNimus on GitHub, as a free software project
 #  licensed under GNU GPLv3.
 #
 # Original Repository: https://github.com/NotsoanoNimus/client-monitor
-# Author: Notsoano Nimus <postmaster@thestraightpath.email>
+# Author: Notsoano Nimus <github@xmit.xyz>
 #
 # This program is free software: you can redistribute it and/or modify it under
 #  the terms of the GNU General Public License as published by the Free Software

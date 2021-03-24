@@ -9,11 +9,11 @@
 
 
 ######################################################################################
-# Copyright (C) 2019 "Notsoano Nimus", as a free software project
+# Copyright (C) 2019 @NotsoanoNimus on GitHub, as a free software project
 #  licensed under GNU GPLv3.
 #
 # Original Repository: https://github.com/NotsoanoNimus/client-monitor
-# Author: Notsoano Nimus <postmaster@thestraightpath.email>
+# Author: Notsoano Nimus <github@xmit.xyz>
 #
 # This program is free software: you can redistribute it and/or modify it under
 #  the terms of the GNU General Public License as published by the Free Software
@@ -47,7 +47,6 @@ $global:ClientMonitorRegexes = @{
 Class CliMonClient {
     [String]$Hostname = $null   #the client's hostname (capitalized, with the DomainSuffix variable added)
     [String]$IpAddress = $null   #the client's ipv4 address
-    ###[String]$Ip6Address = $null   #the client's ipv6 address (if any)
     [String]$RealName = ""   #the full (or partial) name of the workstation
     [Boolean]$IsValid = $False   #is the object a 'valid' client (has all needed info)
     [Boolean]$SessionOpen = $False   #is the session currently open
