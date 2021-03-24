@@ -8,8 +8,6 @@ This file lists all non-critical plans for the project going forward.
 - [ ] Improve the information provided by the different Debug thresholds.
 - [X] ~~More **asynchronous tasking**. Commands to client sessions can be run simultaneously, which could greatly improve the speed of the script during the "Gathering" stage when data is being collected.~~
 
-And of course: send suggestions and report any bugs you come across! I'd be happy to take them.
-
 
 # Ambitions
 A section for "pondered" changes or distant changes that may or may not be considered.
