@@ -1,9 +1,9 @@
 # Things TODO
-This file lists all non-critical plans for the project going forward. Any issues or critical problems should be separately created and noted as a GitHub "Issue" so it can be properly tracked and fixed promptly.
+This file lists all non-critical plans for the project going forward.
 
 ### Queued (non-issue) Changes
 - [ ] Certify and digitally sign the PowerShell scripts.
-- [ ] IPv6 client support.
+- [X] IPv6 client support.
 - [ ] Add `Write-Debug` calls to the methods for the `CliMonClient` module class to provide much better transparency. Also add them within the class definition of `CliMonNotification`.
 - [ ] Improve the information provided by the different Debug thresholds.
 - [X] ~~More **asynchronous tasking**. Commands to client sessions can be run simultaneously, which could greatly improve the speed of the script during the "Gathering" stage when data is being collected.~~

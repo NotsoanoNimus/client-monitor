@@ -34,7 +34,7 @@
 #         as a DomainName configuration variable when the field is left blank.
 $global:ClientMonitorRegexes = @{
     'HOSTNAME' = '^(?!\d+$)[a-zA-Z0-9\-_\\]+$';
-    'HOSTNAME_WITH_SUFFIX' = '^[a-zA-Z0-9][a-zA-Z0-9\._\-]+\.[a-z0-9\-_]{2,}$';
+    'HOSTNAME_WITH_SUFFIX' = '^[a-zA-Z0-9][a-zA-Z0-9\._\-]+\.[a-zA-Z0-9\-_]{2,}$';
     'LOCALHOST_HOSTNAME' = "^(LOCALHOST([0-9]|\.localdomain)?|$([Regex]::Escape($env:COMPUTERNAME)))$";
     'IPV4_ADDRESS' = '\b((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(\.|$)){4}\b';
     'IPV6_ADDRESS' = '^(::)?([a-f0-9]{1,4}:{1,2})*([a-f0-9]{1,4})?$'
@@ -76,11 +76,13 @@ Class CliMonClient {
                 if($global:CliMonConfig.DomainSuffix -eq '.localdomain') { 'localhost' }
                 else { "$env:COMPUTERNAME" }
         }
-        # This constructor can be fed any string, which will be tested for either a hostname or an IPV4 address.
+        # This constructor can be fed any string, which will be tested for either a hostname or an IP address.
         #  It will then flesh out the client accordingly.
         $this.Hostname =
             if($initialParam -match $global:ClientMonitorRegexes['HOSTNAME']) {
                 ($initialParam + $global:CliMonConfig.DomainSuffix).ToUpper()
+            } elseif($initialParam -match $global:ClientMonitorRegexes['HOSTNAME_WITH_SUFFIX']) {
+                $initialParam.ToUpper()
             } else { $this.GetHostname($initialParam) }
         $this.IpAddress =
             if($initialParam -match $global:ClientMonitorRegexes['IPV4_ADDRESS'] -Or
@@ -100,7 +102,7 @@ Class CliMonClient {
         return (
             $this.Hostname -match $global:ClientMonitorRegexes['HOSTNAME_WITH_SUFFIX'] -And
             ($this.IpAddress -match $global:ClientMonitorRegexes['IPV4_ADDRESS'] -Or
-             $this.Ip6Address -imatch $global:ClientMonitorRegexes['IPV6_ADDRESS'])
+             $this.IpAddress -imatch $global:ClientMonitorRegexes['IPV6_ADDRESS'])
         );
     }
 
@@ -202,7 +204,9 @@ Class CliMonClient {
 
     # A boolean function to return whether or not the client is a localhost client.
     [Boolean] IsLocalhost() {
-        return ($this.Hostname -ILike "LOCALHOST*" -Or $this.IpAddress -Like "127.*" -Or $this.IpAddress -Match '^::1?$')
+        return ($this.Hostname -ILike "LOCALHOST*" -Or 
+                $this.IpAddress -Like "127.*" -Or
+                $this.IpAddress -Match '^::1?$')
     }
 
     # Runs a command through the client's active session (if any).
